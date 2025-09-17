@@ -9,9 +9,9 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Endpoint untuk mengecek proxy
-app.post('/check-proxy', async (req, res) => {
-  const { proxy } = req.body;
+// Endpoint dengan path parameter
+app.get('/check/proxy::proxy', async (req, res) => {
+  const proxy = req.params.proxy;
 
   if (!proxy) {
     return res.status(400).json({ error: 'Proxy is required' });
