@@ -1,16 +1,13 @@
 {
   "name": "railway-proxy-checker",
   "version": "1.0.0",
-  "description": "API untuk mengecek apakah proxy berfungsi",
+  "description": "Advanced TCP proxy health checker with stats, alerting, and retry",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "start": "node index.js"
   },
   "dependencies": {
     "express": "^4.18.2",
-    "axios": "^1.6.0",
-    "https-proxy-agent": "^7.0.2",
     "cors": "^2.8.5"
   },
   "engines": {
