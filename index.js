@@ -3,6 +3,10 @@
 // → HANYA cek TCP (default, tanpa perlu parameter tambahan)
 // → Tidak ada HTTP check
 // ================================
+const express = require('express');
+const app = express();
+
+
 app.get('/health', async (req, res) => {
   const { proxy } = req.query;
 
