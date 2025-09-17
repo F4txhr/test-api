@@ -1,99 +1,117 @@
-// index.js — versi FIXED + TCP-only health check
+// index.js — versi FINAL: TCP-only, output rapi, stabil di Railway
 
-const express = require('express'); // 👈 WAJIB
-const net = require('net');          // untuk TCP check
-const cors = require('cors');        // agar bisa dipanggil dari mana saja
+const express = require('express');
+const net = require('net');
+const cors = require('cors');
 
-// 👇 INISIALISASI EXPRESS — INI YANG KAMU LUPA!
 const app = express();
-
 const PORT = process.env.PORT || 3000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
+// Uptime tracker
+const startTime = Date.now();
+
 // ================================
 // 🔍 ENDPOINT: /health?proxy=IP:PORT
-// → HANYA cek TCP — universal untuk semua port & protokol
+// → HANYA cek TCP — output rapi & minimalis
 // ================================
 app.get('/health', async (req, res) => {
   const { proxy } = req.query;
 
+  // Validasi input
   if (!proxy) {
     return res.status(400).json({
-      error: 'Parameter "proxy" wajib. Contoh: /health?proxy=1.1.1.1:8080',
+      success: false,
+      error: 'Missing parameter "proxy". Example: ?proxy=1.1.1.1:8080',
     });
   }
 
-  // Pisahkan host dan port
-  const [host, port] = proxy.includes(':') ? proxy.split(':') : [proxy, '80'];
+  const parts = proxy.includes(':') ? proxy.split(':') : [proxy, '80'];
+  const host = parts[0];
+  const port = parts[1];
 
   if (!host || !port || isNaN(port)) {
     return res.status(400).json({
-      error: 'Format proxy salah. Gunakan: IP:PORT (contoh: 1.1.1.1:8080)',
+      success: false,
+      error: 'Invalid proxy format. Use IP:PORT (e.g., 8.8.8.8:53)',
     });
   }
 
   const portNum = parseInt(port, 10);
+  const testStart = Date.now();
 
-  // === TCP CHECK ===
-  const tcpStart = Date.now();
-  let tcpSuccess = false;
-  let tcpError = '';
+  // Cek TCP
+  let isAlive = false;
+  let error = null;
 
   try {
     await new Promise((resolve, reject) => {
       const socket = net.createConnection(portNum, host);
-
-      socket.setTimeout(5000); // timeout 5 detik
+      socket.setTimeout(5000); // 5 detik timeout
 
       socket.on('connect', () => {
-        tcpSuccess = true;
-        socket.end(); // tutup koneksi
+        isAlive = true;
+        socket.end();
         resolve();
       });
 
       socket.on('error', (err) => {
-        tcpError = err.message;
+        error = err.message;
         reject(err);
       });
 
       socket.on('timeout', () => {
-        tcpError = 'TCP Timeout (5s)';
+        error = 'Connection timeout (5s)';
         socket.destroy();
-        reject(new Error('TCP Timeout'));
+        reject(new Error('Timeout'));
       });
     });
   } catch (err) {
-    if (!tcpError) tcpError = err.message;
+    if (!error) error = err.message;
   }
 
-  const tcpLatency = Date.now() - tcpStart;
-  const status = tcpSuccess ? 'UP' : 'DOWN';
+  const latency = Date.now() - testStart;
+  const success = isAlive;
 
-  res.status(tcpSuccess ? 200 : 503).json({
+  // Response akhir
+  const response = {
+    success: success,
     proxy: proxy,
-    status: status,
-    tcp: {
-      success: tcpSuccess,
-      latency_ms: tcpLatency,
-      error: tcpSuccess ? null : tcpError,
-    },
-    note: "TCP-only port check. No HTTP request made.",
+    status: success ? 'UP' : 'DOWN',
+    latency_ms: latency,
     timestamp: new Date().toISOString(),
+  };
+
+  // Tambah error hanya jika gagal
+  if (!success) {
+    response.error = error;
+  }
+
+  res.status(success ? 200 : 503).json(response);
+});
+
+// Endpoint info — opsional
+app.get('/info', (req, res) => {
+  res.json({
+    service: "TCP Proxy Health Checker",
+    uptime_seconds: Math.floor((Date.now() - startTime) / 1000),
+    node_version: process.version,
+    environment: process.env.NODE_ENV || 'production',
   });
 });
 
-// Endpoint fallback
+// Handle route tidak dikenal
 app.use('*', (req, res) => {
   res.status(404).json({
-    error: 'Gunakan endpoint: /health?proxy=IP:PORT',
+    success: false,
+    error: 'Endpoint not found. Use /health?proxy=IP:PORT',
   });
 });
 
-// 👇 JANGAN LUPA: JALANKAN SERVER!
+// Jalankan server
 app.listen(PORT, () => {
-  console.log(`✅ Proxy Health Checker running on port ${PORT}`);
-  console.log(`🌐 Visit: http://localhost:${PORT}/health?proxy=1.1.1.1:80`);
+  console.log(`✅ Server running on port ${PORT}`);
+  console.log(`🚀 Test: /health?proxy=1.1.1.1:80`);
 });
