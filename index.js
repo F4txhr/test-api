@@ -1,12 +1,22 @@
-// ================================
-// 🔍 ENDPOINT: /health?proxy=IP:PORT
-// → HANYA cek TCP (default, tanpa perlu parameter tambahan)
-// → Tidak ada HTTP check
-// ================================
-const express = require('express');
+// index.js — versi FIXED + TCP-only health check
+
+const express = require('express'); // 👈 WAJIB
+const net = require('net');          // untuk TCP check
+const cors = require('cors');        // agar bisa dipanggil dari mana saja
+
+// 👇 INISIALISASI EXPRESS — INI YANG KAMU LUPA!
 const app = express();
 
+const PORT = process.env.PORT || 3000;
 
+// Middleware
+app.use(cors());
+app.use(express.json());
+
+// ================================
+// 🔍 ENDPOINT: /health?proxy=IP:PORT
+// → HANYA cek TCP — universal untuk semua port & protokol
+// ================================
 app.get('/health', async (req, res) => {
   const { proxy } = req.query;
 
@@ -40,7 +50,7 @@ app.get('/health', async (req, res) => {
 
       socket.on('connect', () => {
         tcpSuccess = true;
-        socket.end(); // tutup koneksi setelah sukses
+        socket.end(); // tutup koneksi
         resolve();
       });
 
@@ -60,8 +70,6 @@ app.get('/health', async (req, res) => {
   }
 
   const tcpLatency = Date.now() - tcpStart;
-
-  // === Response Akhir ===
   const status = tcpSuccess ? 'UP' : 'DOWN';
 
   res.status(tcpSuccess ? 200 : 503).json({
@@ -72,7 +80,20 @@ app.get('/health', async (req, res) => {
       latency_ms: tcpLatency,
       error: tcpSuccess ? null : tcpError,
     },
-    note: "TCP-only check. HTTP validation disabled for universal port support.",
+    note: "TCP-only port check. No HTTP request made.",
     timestamp: new Date().toISOString(),
   });
+});
+
+// Endpoint fallback
+app.use('*', (req, res) => {
+  res.status(404).json({
+    error: 'Gunakan endpoint: /health?proxy=IP:PORT',
+  });
+});
+
+// 👇 JANGAN LUPA: JALANKAN SERVER!
+app.listen(PORT, () => {
+  console.log(`✅ Proxy Health Checker running on port ${PORT}`);
+  console.log(`🌐 Visit: http://localhost:${PORT}/health?proxy=1.1.1.1:80`);
 });
