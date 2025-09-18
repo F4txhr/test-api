@@ -1,9 +1,11 @@
-// index.js — versi ULTIMATE: proxy health + alerting + batch convert + full parser
+// index.js — versi ULTIMATE: proxy health + alerting + batch convert + full parser + template system
 
 const express = require('express');
 const net = require('net');
 const cors = require('cors');
 const fetch = require('node-fetch');
+const fs = require('fs').promises;
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -15,8 +17,8 @@ app.use(express.text());
 // ✅ Rate Limiting
 const rateLimit = require('express-rate-limit');
 const limiter = rateLimit({
-  windowMs: 60 * 1000, // 1 menit
-  max: 30, // max 30 request per IP per menit
+  windowMs: 60 * 1000,
+  max: 1000,
 });
 app.use('/health', limiter);
 app.use('/convert', limiter);
@@ -212,7 +214,7 @@ app.get('/ping', (req, res) => {
 });
 
 // ================================
-// 🔄 PARSER & CONVERTER — VLESS, VMess, Trojan, Shadowsocks
+// 🔄 PARSER & CONVERTER — VLESS, VMess, Trojan, Shadowsocks (SUPPORT WS!)
 // ================================
 
 function parseSS(link) {
@@ -390,6 +392,11 @@ function parseAnyLink(link) {
 function toClash(config) {
   switch (config.type) {
     case 'vless':
+      let vlessWsHeaders = '';
+      if (config.type === 'ws' && config.host) {
+        vlessWsHeaders = `  ws-headers:
+    Host: ${config.host}`;
+      }
       return `
 - name: "${config.name.replace(/"/g, '\\"')}"
   type: vless
@@ -399,14 +406,15 @@ function toClash(config) {
   tls: ${config.security !== 'none'}
   ${config.security !== 'none' ? `servername: ${config.sni}\n  ` : ''}
   ${config.flow ? `flow: ${config.flow}\n  ` : ''}
+  ${config.type === 'ws' ? `network: ws\n  ws-path: ${config.path}\n${vlessWsHeaders}` : ''}
   udp: true
   skip-cert-verify: true
 `.trim();
 
     case 'vmess':
-      let wsHeaders = '';
+      let vmessWsHeaders = '';
       if (config.network === 'ws' && config.host) {
-        wsHeaders = `  ws-headers:
+        vmessWsHeaders = `  ws-headers:
     Host: ${config.host}`;
       }
       return `
@@ -420,12 +428,17 @@ function toClash(config) {
   tls: ${config.tls}
   ${config.tls ? `servername: ${config.sni}\n  ` : ''}
   network: ${config.network}
-  ${config.network === 'ws' ? `ws-path: ${config.path}\n${wsHeaders}` : ''}
+  ${config.network === 'ws' ? `ws-path: ${config.path}\n${vmessWsHeaders}` : ''}
   udp: true
   skip-cert-verify: true
 `.trim();
 
     case 'trojan':
+      let trojanWsHeaders = '';
+      if (config.type === 'ws' && config.host) {
+        trojanWsHeaders = `  ws-headers:
+    Host: ${config.host}`;
+      }
       return `
 - name: "${config.name.replace(/"/g, '\\"')}"
   type: trojan
@@ -434,6 +447,7 @@ function toClash(config) {
   password: ${config.password}
   tls: true
   sni: ${config.sni}
+  ${config.type === 'ws' ? `network: ws\n  ws-path: ${config.path}\n${trojanWsHeaders}` : ''}
   udp: true
   skip-cert-verify: true
 `.trim();
@@ -467,13 +481,16 @@ function toSurge(config) {
     case 'vless':
       let vlessOpts = `tls=true, sni=${config.sni}`;
       if (config.flow) vlessOpts += `, flow=${config.flow}`;
+      if (config.type === 'ws') vlessOpts += `, ws=true, ws-path=${config.path}, ws-headers=Host:${config.host}`;
       return `${config.name} = vless, ${config.host}, ${config.port}, username=${config.uuid}, ${vlessOpts}`;
     case 'vmess':
       let vmessOpts = `tls=${config.tls}, ws=true, ws-path=${config.path}`;
       if (config.host) vmessOpts += `, ws-headers=Host:${config.host}`;
       return `${config.name} = vmess, ${config.host}, ${config.port}, username=${config.uuid}, ${vmessOpts}`;
     case 'trojan':
-      return `${config.name} = trojan, ${config.host}, ${config.port}, password=${config.password}, sni=${config.sni}`;
+      let trojanOpts = `sni=${config.sni}`;
+      if (config.type === 'ws') trojanOpts += `, ws=true, ws-path=${config.path}, ws-headers=Host:${config.host}`;
+      return `${config.name} = trojan, ${config.host}, ${config.port}, password=${config.password}, ${trojanOpts}`;
     case 'ss':
       return `${config.name} = custom, ${config.host}, ${config.port}, ${config.method}, ${config.password}, https://raw.githubusercontent.com/ConnersHua/SSEncrypt/master/SSEncrypt.module`;
     default:
@@ -486,13 +503,16 @@ function toQuantumult(config) {
     case 'vless':
       let vlessParams = `tls=true, sni=${config.sni}`;
       if (config.flow) vlessParams += `, flow=${config.flow}`;
+      if (config.type === 'ws') vlessParams += `, ws=true, ws-path=${config.path}, ws-header=Host:${config.host}`;
       return `vmess=${config.host}:${config.port}, method=none, password=${config.uuid}, ${vlessParams}, tag=${config.name}`;
     case 'vmess':
       let vmessParams = `tls=${config.tls}, ws=true, ws-path=${config.path}`;
       if (config.host) vmessParams += `, ws-header=Host:${config.host}`;
       return `vmess=${config.host}:${config.port}, method=none, password=${config.uuid}, ${vmessParams}, tag=${config.name}`;
     case 'trojan':
-      return `trojan=${config.host}:${config.port}, password=${config.password}, over-tls=true, tls-host=${config.sni}, tag=${config.name}`;
+      let trojanParams = `over-tls=true, tls-host=${config.sni}`;
+      if (config.type === 'ws') trojanParams += `, ws=true, ws-path=${config.path}, ws-header=Host:${config.host}`;
+      return `trojan=${config.host}:${config.port}, password=${config.password}, ${trojanParams}, tag=${config.name}`;
     case 'ss':
       let ssParams = `encrypt-method=${config.method}`;
       if (config.obfs) ssParams += `, obfs=${config.obfs}, obfs-host=${config.obfsHost}`;
@@ -505,7 +525,7 @@ function toQuantumult(config) {
 function toSingBox(config) {
   let base = {
     tag: config.name,
-    type: config.type,
+    type: config.type === 'ss' ? 'shadowsocks' : config.type,
     server: config.host,
     server_port: config.port
   };
@@ -518,7 +538,7 @@ function toSingBox(config) {
       server_name: config.sni
     };
     if (config.flow) base.flow = config.flow;
-    if (config.network === 'ws') {
+    if (config.type === 'ws' || config.network === 'ws') {
       base.transport = {
         type: 'ws',
         path: config.path,
@@ -531,90 +551,98 @@ function toSingBox(config) {
       enabled: true,
       server_name: config.sni
     };
+    if (config.type === 'ws') {
+      base.transport = {
+        type: 'ws',
+        path: config.path,
+        headers: { Host: config.host }
+      };
+    }
   } else if (config.type === 'ss') {
     base.method = config.method;
     base.password = config.password;
-    if (config.obfs) {
-      base.plugin = config.obfs;
-      base.plugin_opts = `obfs=${config.obfs};obfs-host=${config.obfsHost}`;
+    if (config.plugin) {
+      base.plugin = config.plugin;
+      base.plugin_opts = config.pluginOpts;
     }
   }
 
   return JSON.stringify(base, null, 2);
 }
 
-function generateClashConfig(results) {
-  const proxies = results
-    .filter(r => !r.error)
-    .map(r => r.formats.clash)
-    .join('\n');
+// ================================
+// 🧩 TEMPLATE SYSTEM — Load from files
+// ================================
 
-  const proxyNames = results
-    .filter(r => !r.error)
-    .map(r => `      - "${r.original.name.replace(/"/g, '\\"')}"`)
-    .join('\n');
-
-  return `proxies:
-${proxies.split('\n').map(line => '  ' + line).join('\n')}
-
-proxy-groups:
-  - name: "🚀 PROXY"
-    type: select
-${proxyNames ? proxyNames : '      - "DIRECT"'}
-`;
+async function loadTemplate(format) {
+  try {
+    const templatePath = path.join(__dirname, 'templates', `${format}.json`);
+    const data = await fs.readFile(templatePath, 'utf8');
+    return JSON.parse(data);
+  } catch (error) {
+    console.error(`Gagal load template ${format}:`, error.message);
+    throw new Error(`Template ${format} tidak ditemukan`);
+  }
 }
 
-function generateSurgeConfig(results) {
-  const proxies = results
-    .filter(r => !r.error)
-    .map(r => r.formats.surge)
-    .join('\n');
-
-  const proxyNames = results
-    .filter(r => !r.error)
-    .map(r => r.original.name)
-    .join(', ');
-
-  return `[Proxy]
-${proxies}
-
-[Proxy Group]
-🚀 PROXY = select, ${proxyNames || 'DIRECT'}
-`;
+async function loadTemplateText(format) {
+  try {
+    const ext = format === 'clash' ? 'yaml' : 'conf';
+    const templatePath = path.join(__dirname, 'templates', `${format}.${ext}`);
+    return await fs.readFile(templatePath, 'utf8');
+  } catch (error) {
+    console.error(`Gagal load template ${format}:`, error.message);
+    throw new Error(`Template ${format} tidak ditemukan`);
+  }
 }
 
-function generateQuantumultConfig(results) {
-  const servers = results
-    .filter(r => !r.error)
-    .map(r => r.formats.quantumult)
-    .join('\n');
+async function generateSingBoxConfig(results) {
+  const template = await loadTemplate('singbox');
+  const validProxies = results.filter(r => !r.error).map(r => JSON.parse(r.formats.singbox));
 
-  const serverNames = results
-    .filter(r => !r.error)
-    .map(r => r.original.name)
-    .join(', ');
+  template.outbounds[0].outbounds.push(...validProxies.map(p => p.tag));
+  template.outbounds.push(...validProxies);
 
-  return `[SERVER]
-${servers}
-
-[SERVER GROUP]
-🚀 PROXY = ${serverNames || 'direct'}
-`;
+  return JSON.stringify(template, null, 2);
 }
 
-function generateSingBoxConfig(results) {
-  const outbounds = results
-    .filter(r => !r.error)
-    .map(r => JSON.parse(r.formats.singbox));
+async function generateClashConfig(results) {
+  let template = await loadTemplateText('clash');
+  const validProxies = results.filter(r => !r.error);
 
-  return JSON.stringify({
-    log: { level: "info" },
-    outbounds: [
-      ...outbounds,
-      { type: "direct", tag: "direct" },
-      { type: "block", tag: "block" }
-    ]
-  }, null, 2);
+  const proxyConfigs = validProxies.map(r => r.formats.clash).join('\n');
+  template = template.replace('# PROXY_PLACEHOLDER', proxyConfigs);
+
+  const proxyNames = validProxies.map(r => `      - "${r.original.name.replace(/"/g, '\\"')}"`).join('\n');
+  template = template.replace('# PROXY_NAMES_PLACEHOLDER', proxyNames);
+
+  return template;
+}
+
+async function generateSurgeConfig(results) {
+  let template = await loadTemplateText('surge');
+  const validProxies = results.filter(r => !r.error);
+
+  const proxyConfigs = validProxies.map(r => r.formats.surge).join('\n');
+  template = template.replace('# PROXY_PLACEHOLDER', proxyConfigs);
+
+  const proxyNames = validProxies.map(r => r.original.name).join(', ');
+  template = template.replace('🚀 PROXY = select, DIRECT', `🚀 PROXY = select, DIRECT, ${proxyNames}`);
+
+  return template;
+}
+
+async function generateQuantumultConfig(results) {
+  let template = await loadTemplateText('quantumult');
+  const validProxies = results.filter(r => !r.error);
+
+  const serverConfigs = validProxies.map(r => r.formats.quantumult).join('\n');
+  template = template.replace('// PROXY_PLACEHOLDER', serverConfigs);
+
+  const serverNames = validProxies.map(r => r.original.name).join(', ');
+  template = template.replace('🚀 PROXY = direct', `🚀 PROXY = direct, ${serverNames}`);
+
+  return template;
 }
 
 // ================================
@@ -626,9 +654,15 @@ app.get('/convert/clash', async (req, res) => {
   if (!link) return res.status(400).json({ error: "Missing 'link'" });
   try {
     const parsed = parseAnyLink(link);
-    const config = toClash(parsed);
+    const formats = {
+      clash: toClash(parsed),
+      surge: toSurge(parsed),
+      quantumult: toQuantumult(parsed),
+      singbox: toSingBox(parsed)
+    };
+    const config = await generateClashConfig([{ original: parsed, formats, link }]);
     res.set('Content-Type', 'text/yaml');
-    res.set('Content-Disposition', 'attachment; filename="proxy.yaml"');
+    res.set('Content-Disposition', 'attachment; filename="proxies.yaml"');
     res.send(config);
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
@@ -638,9 +672,15 @@ app.get('/convert/surge', async (req, res) => {
   if (!link) return res.status(400).json({ error: "Missing 'link'" });
   try {
     const parsed = parseAnyLink(link);
-    const config = toSurge(parsed);
+    const formats = {
+      clash: toClash(parsed),
+      surge: toSurge(parsed),
+      quantumult: toQuantumult(parsed),
+      singbox: toSingBox(parsed)
+    };
+    const config = await generateSurgeConfig([{ original: parsed, formats, link }]);
     res.set('Content-Type', 'text/plain');
-    res.set('Content-Disposition', 'attachment; filename="surge.conf"');
+    res.set('Content-Disposition', 'attachment; filename="proxies.conf"');
     res.send(config);
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
@@ -650,9 +690,15 @@ app.get('/convert/quantumult', async (req, res) => {
   if (!link) return res.status(400).json({ error: "Missing 'link'" });
   try {
     const parsed = parseAnyLink(link);
-    const config = toQuantumult(parsed);
+    const formats = {
+      clash: toClash(parsed),
+      surge: toSurge(parsed),
+      quantumult: toQuantumult(parsed),
+      singbox: toSingBox(parsed)
+    };
+    const config = await generateQuantumultConfig([{ original: parsed, formats, link }]);
     res.set('Content-Type', 'text/plain');
-    res.set('Content-Disposition', 'attachment; filename="quantumult.conf"');
+    res.set('Content-Disposition', 'attachment; filename="proxies.conf"');
     res.send(config);
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
@@ -662,9 +708,15 @@ app.get('/convert/singbox', async (req, res) => {
   if (!link) return res.status(400).json({ error: "Missing 'link'" });
   try {
     const parsed = parseAnyLink(link);
-    const config = toSingBox(parsed);
+    const formats = {
+      clash: toClash(parsed),
+      surge: toSurge(parsed),
+      quantumult: toQuantumult(parsed),
+      singbox: toSingBox(parsed)
+    };
+    const config = await generateSingBoxConfig([{ original: parsed, formats, link }]);
     res.set('Content-Type', 'application/json');
-    res.set('Content-Disposition', 'attachment; filename="singbox.json"');
+    res.set('Content-Disposition', 'attachment; filename="proxies.json"');
     res.send(config);
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
@@ -698,10 +750,10 @@ app.get('/convert', async (req, res) => {
 
     let config = '';
     switch (format) {
-      case 'clash': config = generateClashConfig(results); break;
-      case 'surge': config = generateSurgeConfig(results); break;
-      case 'quantumult': config = generateQuantumultConfig(results); break;
-      case 'singbox': config = generateSingBoxConfig(results); break;
+      case 'clash': config = await generateClashConfig(results); break;
+      case 'surge': config = await generateSurgeConfig(results); break;
+      case 'quantumult': config = await generateQuantumultConfig(results); break;
+      case 'singbox': config = await generateSingBoxConfig(results); break;
     }
 
     const mimeTypes = {
@@ -754,10 +806,10 @@ app.post('/convert/batch', async (req, res) => {
 
     let config = '';
     switch (format) {
-      case 'clash': config = generateClashConfig(results); break;
-      case 'surge': config = generateSurgeConfig(results); break;
-      case 'quantumult': config = generateQuantumultConfig(results); break;
-      case 'singbox': config = generateSingBoxConfig(results); break;
+      case 'clash': config = await generateClashConfig(results); break;
+      case 'surge': config = await generateSurgeConfig(results); break;
+      case 'quantumult': config = await generateQuantumultConfig(results); break;
+      case 'singbox': config = await generateSingBoxConfig(results); break;
     }
 
     const mimeTypes = {
