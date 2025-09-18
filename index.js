@@ -10,7 +10,6 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.set('trust proxy', true);
 
 app.use(cors());
 app.use(express.json());
@@ -336,32 +335,35 @@ function parseTrojan(link) {
     throw new Error('Not a Trojan link');
   }
 
-  const clean = link.replace('trojan://', '');
-  const [passwordWithParams, rest] = clean.split('@');
-  const [hostport, paramString] = rest.split('?');
-  const [host, port] = hostport.split(':');
-
+  const [_, userinfo, serverinfo] = link.match(/^trojan:\/\/([^@]+)@([^#?]+)(\?[^#]+)?(#.*)?$/);
+  
+  const [host, port] = serverinfo.split(':');
   const params = {};
-  if (paramString) {
+  
+  if (link.includes('?')) {
+    const paramString = link.split('?')[1].split('#')[0];
     paramString.split('&').forEach(pair => {
       const [key, value] = pair.split('=');
-      params[decodeURIComponent(key)] = decodeURIComponent(value || '');
+      params[key] = decodeURIComponent(value);
     });
   }
 
+  const name = link.includes('#') ? decodeURIComponent(link.split('#')[1]) : 'Trojan Server';
+
   return {
-    type: 'trojan',
-    password: passwordWithParams.split('?')[0],
+    type: 'trojan', // Protokol (Trojan)
+    password: userinfo,
     host,
     port: parseInt(port),
     security: params.security || 'tls',
-    type: params.type || 'tcp',
+    network: params.type || 'tcp', // Ganti 'type' menjadi 'network' untuk kejelasan
     path: params.path || '/',
-    host: params.host || host,
+    host_header: params.host || host, // Ganti 'host' menjadi 'host_header'
     sni: params.sni || params.host || host,
-    name: params['#'] ? decodeURIComponent(params['#']) : 'Trojan Server'
+    name,
   };
 }
+
 
 function parseAnyLink(link) {
   if (link.startsWith('vless://')) {
@@ -426,17 +428,16 @@ function toClash(config) {
 `.trim();
 
     case 'trojan':
-      let network = config.type === 'ws' ? 'ws' : 'tcp';
-      let wsPart = '';
-      if (network === 'ws') {
-        wsPart = `
+  let wsPart = '';
+  if (config.network === 'ws') {
+    wsPart = `
   network: ws
   ws-path: ${config.path}
   ws-headers:
-    Host: ${config.host}`;
-      }
+    Host: ${config.host_header}`;
+  }
 
-      return `
+  return `
 - name: "${config.name.replace(/"/g, '\\"')}"
   type: trojan
   server: ${config.host}
@@ -448,6 +449,7 @@ function toClash(config) {
   udp: true
   skip-cert-verify: true
 `.trim();
+
 
     case 'ss':
       let pluginStr = '';
