@@ -26,9 +26,9 @@ const limiter = rateLimit({
   validate: { xForwardedForHeader: false }
 });
 */
-app.use('/health', limiter);
-app.use('/convert', limiter);
-app.use('/convert-batch', limiter);
+app.use('/health');
+app.use('/convert');
+app.use('/convert-batch');
 
 // ✅ Logging
 app.use((req, res, next) => {
