@@ -170,20 +170,12 @@ app.get('/metrics', (req, res) => {
   const successRate = totalRequests > 0 ? (successCount / totalRequests) : 0;
 
   const metrics = `
-# HELP proxy_checker_uptime_seconds Uptime in seconds
-# TYPE proxy_checker_uptime_seconds gauge
 Uptime: ${uptimeSeconds}
 
-# HELP proxy_checker_total_requests Total number of requests
-# TYPE proxy_checker_total_requests counter
 Total request ${totalRequests}
 
-# HELP proxy_checker_success_count Total successful checks
-# TYPE proxy_checker_success_count counter
 Success count ${successCount}
 
-# HELP proxy_checker_success_rate Success rate (0-1)
-# TYPE proxy_checker_success_rate gauge
 Success rate ${successRate}
   `.trim();
 
