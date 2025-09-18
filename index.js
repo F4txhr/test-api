@@ -17,6 +17,7 @@ app.use(express.json());
 app.use(express.text());
 
 // ✅ Rate Limiting
+/*
 const rateLimit = require('express-rate-limit');
 const limiter = rateLimit({
   windowMs: 60 * 1000,
@@ -24,6 +25,7 @@ const limiter = rateLimit({
   skipFailedRequests: true,
   validate: { xForwardedForHeader: false }
 });
+*/
 app.use('/health', limiter);
 app.use('/convert', limiter);
 app.use('/convert-batch', limiter);
