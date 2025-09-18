@@ -21,6 +21,8 @@ const rateLimit = require('express-rate-limit');
 const limiter = rateLimit({
   windowMs: 60 * 1000,
   max: 1000,
+  skipFailedRequests: true,
+  validate: { xForwardedForHeader: false }
 });
 app.use('/health', limiter);
 app.use('/convert', limiter);
