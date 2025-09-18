@@ -3,13 +3,12 @@
 const express = require('express');
 const net = require('net');
 const cors = require('cors');
-const fetch = require('node-fetch');
+const fetch = require('node-fetch'); // Pastikan versi kompatibel
 const fs = require('fs').promises;
 const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-
 
 app.use(cors());
 app.use(express.json());
@@ -32,7 +31,7 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 async function sendTelegramAlert(message) {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+  if (!TELEGRAM_BOT_TOKEN || !TELELEGRAM_CHAT_ID) {
     console.warn("⚠️ Telegram alert disabled — token or chat_id not set");
     return;
   }
@@ -197,8 +196,8 @@ vortex_success_rate_ratio ${totalRequests > 0 ? (successCount / totalRequests) :
 
 // ✅ Endpoint: /ping
 app.get('/ping', (req, res) => {
-  res.status(200).json({ 
-    status: 'Alive', 
+  res.status(200).json({
+    status: 'Alive',
     uptime_seconds: Math.floor((Date.now() - startTime) / 1000),
     time_wib: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
   });
@@ -268,18 +267,32 @@ function parseVLESS(link) {
 
   const clean = link.replace('vless://', '');
   const [userinfo, rest] = clean.split('@');
-  const [uuid] = userinfo.split(':');
+  const [uuid] = userinfo.split(':'); // Potentially handle password if present
 
   const [hostport, paramString] = rest.split('?');
   const [host, port] = hostport.split(':');
 
   const params = {};
+  let fragmentName = '';
+
   if (paramString) {
-    paramString.split('&').forEach(pair => {
-      const [key, value] = pair.split('=');
-      params[decodeURIComponent(key)] = decodeURIComponent(value || '');
-    });
+    // Split params and fragment
+    const paramParts = paramString.split('#');
+    const queryParams = paramParts[0];
+    fragmentName = paramParts[1] ? decodeURIComponent(paramParts[1]) : '';
+
+    if (queryParams) {
+      queryParams.split('&').forEach(pair => {
+        const [key, value] = pair.split('=');
+        if (key) {
+          params[decodeURIComponent(key)] = decodeURIComponent(value || '');
+        }
+      });
+    }
   }
+
+  // Prioritize fragment name, fallback to ps param if exists
+  const name = fragmentName || params.ps || 'VLESS Server';
 
   return {
     type: 'vless',
@@ -288,14 +301,19 @@ function parseVLESS(link) {
     port: parseInt(port),
     security: params.security || 'none',
     flow: params.flow || '',
-    type: params.type || 'tcp',
-    path: params.path || '/',
-    host: params.host || params.sni || host,
+    type: params.type || 'tcp', // Network type
+    path: params.path || (params.type === 'ws' ? '/' : ''),
+    host_header: params.host || '', // Explicit host header
     sni: params.sni || params.host || host,
     fp: params.fp || '',
-    pbk: params.pbk || '',
-    sid: params.sid || '',
-    name: params['#'] ? decodeURIComponent(params['#']) : 'VLESS Server'
+    pbk: params.pbk || '', // Public Key for REALITY
+    sid: params.sid || '', // Short ID for REALITY
+    spx: params.spx || '', // SpiderX for REALITY
+    alpn: params.alpn || '',
+    allowInsecure: params.allowInsecure === '1' || params.allowInsecure === 'true' || false,
+    name: name,
+    // Add any other parameters found in the link
+    ...Object.fromEntries(Object.entries(params).filter(([k]) => !['security', 'flow', 'type', 'path', 'host', 'sni', 'fp', 'pbk', 'sid', 'spx', 'alpn', 'allowInsecure', 'ps'].includes(k)))
   };
 }
 
@@ -315,14 +333,15 @@ function parseVMess(link) {
       host: obj.add,
       port: parseInt(obj.port),
       alterId: parseInt(obj.aid) || 0,
-      security: obj.tls || 'none',
+      security: obj.sc || obj.cipher || 'auto', // Prefer 'sc', fallback to 'cipher'
       network: obj.net || 'tcp',
-      type: obj.type || 'none',
-      path: obj.path || '/',
-      host: obj.host || obj.add,
+      type: obj.type || 'none', // VMess specific type (e.g., for kcp)
+      path: obj.path || (obj.net === 'ws' ? '/' : ''),
+      host_header: obj.host || obj.add, // Explicit host header
       sni: obj.sni || obj.host || obj.add,
       tls: obj.tls === 'tls',
-      v: obj.v || '2',
+      alpn: obj.alpn || '',
+      fp: obj.fp || '',
       name: obj.ps || 'VMess Server'
     };
   } catch (e) {
@@ -335,32 +354,44 @@ function parseTrojan(link) {
     throw new Error('Not a Trojan link');
   }
 
-  const [_, userinfo, serverinfo] = link.match(/^trojan:\/\/([^@]+)@([^#?]+)(\?[^#]+)?(#.*)?$/);
-  
+  const match = link.match(/^trojan:\/\/([^@]+)@([^#?]+)(\?[^#]+)?(#.*)?$/);
+  if (!match) {
+      throw new Error('Invalid Trojan link format');
+  }
+
+  const [_, userinfo, serverinfo, paramString, fragment] = match;
+
   const [host, port] = serverinfo.split(':');
   const params = {};
-  
-  if (link.includes('?')) {
-    const paramString = link.split('?')[1].split('#')[0];
-    paramString.split('&').forEach(pair => {
+
+  if (paramString) {
+    const queryParams = paramString.substring(1).split('#')[0]; // Remove leading '?'
+    queryParams.split('&').forEach(pair => {
       const [key, value] = pair.split('=');
-      params[key] = decodeURIComponent(value);
+      if (key) {
+        params[decodeURIComponent(key)] = decodeURIComponent(value || '');
+      }
     });
   }
 
-  const name = link.includes('#') ? decodeURIComponent(link.split('#')[1]) : 'Trojan Server';
+  const name = fragment ? decodeURIComponent(fragment.substring(1)) : 'Trojan Server'; // Remove leading '#'
 
   return {
-    type: 'trojan', // Protokol (Trojan)
+    type: 'trojan',
     password: userinfo,
     host,
     port: parseInt(port),
-    security: params.security || 'tls',
-    network: params.type || 'tcp', // Ganti 'type' menjadi 'network' untuk kejelasan
-    path: params.path || '/',
-    host_header: params.host || host, // Ganti 'host' menjadi 'host_header'
+    security: params.security || 'tls', // Usually tls for trojan
+    network: params.type || 'tcp', // Transport type
+    path: params.path || (params.type === 'ws' ? '/' : ''),
+    host_header: params.host || host, // Explicit host header
     sni: params.sni || params.host || host,
+    alpn: params.alpn || '',
+    fp: params.fp || '',
+    allowInsecure: params.allowInsecure === '1' || params.allowInsecure === 'true' || false,
     name,
+    // Add any other parameters found in the link
+    ...Object.fromEntries(Object.entries(params).filter(([k]) => !['security', 'type', 'path', 'host', 'sni', 'alpn', 'fp', 'allowInsecure'].includes(k)))
   };
 }
 
@@ -386,80 +417,101 @@ function parseAnyLink(link) {
 function toClash(config) {
   switch (config.type) {
     case 'vless':
-      let vlessWsHeaders = '';
-      if (config.type === 'ws' && config.host) {
-        vlessWsHeaders = `  ws-headers:
-    Host: ${config.host}`;
-      }
-      return `
+      let vlessConfig = `
 - name: "${config.name.replace(/"/g, '\\"')}"
   type: vless
   server: ${config.host}
   port: ${config.port}
   uuid: ${config.uuid}
-  tls: ${config.security !== 'none'}
-  ${config.security !== 'none' ? `servername: ${config.sni}\n  ` : ''}
-  ${config.flow ? `flow: ${config.flow}\n  ` : ''}
-  ${config.type === 'ws' ? `network: ws\n  ws-path: ${config.path}\n${vlessWsHeaders}` : ''}
   udp: true
-  skip-cert-verify: true
-`.trim();
+  skip-cert-verify: ${config.allowInsecure}
+`;
+      if (config.security === 'tls' || config.security === 'reality') {
+        vlessConfig += `  tls: true\n`;
+        if(config.sni) vlessConfig += `  servername: ${config.sni}\n`;
+        if(config.alpn) vlessConfig += `  alpn: [${config.alpn.split(',').map(a => `"${a.trim()}"`).join(', ')}]\n`;
+        if(config.fp) vlessConfig += `  fingerprint: ${config.fp}\n`;
+        if(config.security === 'reality') {
+            vlessConfig += `  client-fingerprint: ${config.fp}\n`;
+            if(config.pbk) vlessConfig += `  public-key: ${config.pbk}\n`;
+            if(config.sid) vlessConfig += `  short-id: ${config.sid}\n`;
+            if(config.spx) vlessConfig += `  spider-x: ${config.spx}\n`;
+        } else if (config.security === 'tls') {
+             if (config.flow) vlessConfig += `  flow: ${config.flow}\n`;
+        }
+      } else {
+        vlessConfig += `  tls: false\n`;
+      }
+
+      if (config.type === 'ws') { // network type
+        vlessConfig += `  network: ws\n`;
+        vlessConfig += `  ws-path: ${config.path}\n`;
+        if (config.host_header) {
+          vlessConfig += `  ws-headers:\n    Host: ${config.host_header}\n`;
+        }
+      }
+      // Tambahkan penanganan lain jika diperlukan (grpc, http, dsb.)
+      return vlessConfig.trim();
 
     case 'vmess':
-      let vmessWsHeaders = '';
-      if (config.network === 'ws' && config.host) {
-        vmessWsHeaders = `  ws-headers:
-    Host: ${config.host}`;
-      }
-      return `
+      let vmessConfig = `
 - name: "${config.name.replace(/"/g, '\\"')}"
   type: vmess
   server: ${config.host}
   port: ${config.port}
   uuid: ${config.uuid}
   alterId: ${config.alterId}
-  cipher: auto
-  tls: ${config.tls}
-  ${config.tls ? `servername: ${config.sni}\n  ` : ''}
-  network: ${config.network}
-  ${config.network === 'ws' ? `ws-path: ${config.path}\n${vmessWsHeaders}` : ''}
+  cipher: ${config.security}
   udp: true
-  skip-cert-verify: true
-`.trim();
+  skip-cert-verify: ${config.allowInsecure}
+`;
+      if (config.tls) {
+        vmessConfig += `  tls: true\n`;
+        if(config.sni) vmessConfig += `  servername: ${config.sni}\n`;
+        if(config.alpn) vmessConfig += `  alpn: [${config.alpn.split(',').map(a => `"${a.trim()}"`).join(', ')}]\n`;
+        if(config.fp) vmessConfig += `  fingerprint: ${config.fp}\n`;
+      } else {
+        vmessConfig += `  tls: false\n`;
+      }
+
+      if (config.network === 'ws') {
+        vmessConfig += `  network: ws\n`;
+        vmessConfig += `  ws-path: ${config.path}\n`;
+        if (config.host_header) {
+          vmessConfig += `  ws-headers:\n    Host: ${config.host_header}\n`;
+        }
+      }
+      // Tambahkan penanganan lain jika diperlukan
+      return vmessConfig.trim();
 
     case 'trojan':
-  let wsPart = '';
-  if (config.network === 'ws') {
-    wsPart = `
-  network: ws
-  ws-path: ${config.path}
-  ws-headers:
-    Host: ${config.host_header}`;
-  }
-
-  return `
+      let trojanConfig = `
 - name: "${config.name.replace(/"/g, '\\"')}"
   type: trojan
   server: ${config.host}
   port: ${config.port}
   password: ${config.password}
-  tls: true
-  sni: ${config.sni}
-  ${wsPart}
   udp: true
-  skip-cert-verify: true
-`.trim();
+  skip-cert-verify: ${config.allowInsecure}
+`;
+      // Trojan usually implies TLS
+      trojanConfig += `  tls: true\n`;
+      if(config.sni) trojanConfig += `  sni: ${config.sni}\n`;
+      if(config.alpn) trojanConfig += `  alpn: [${config.alpn.split(',').map(a => `"${a.trim()}"`).join(', ')}]\n`;
+      if(config.fp) trojanConfig += `  fingerprint: ${config.fp}\n`;
 
+      if (config.network === 'ws') {
+        trojanConfig += `  network: ws\n`;
+        trojanConfig += `  ws-path: ${config.path}\n`;
+        if (config.host_header) {
+          trojanConfig += `  ws-headers:\n    Host: ${config.host_header}\n`;
+        }
+      }
+      // Tambahkan penanganan lain jika diperlukan
+      return trojanConfig.trim();
 
     case 'ss':
-      let pluginStr = '';
-      if (config.plugin) {
-        pluginStr = `  plugin: ${config.plugin}
-  plugin-opts:
-    mode: ${config.obfs || 'tls'}
-    host: ${config.obfsHost || config.host}`;
-      }
-      return `
+      let ssConfig = `
 - name: "${config.name.replace(/"/g, '\\"')}"
   type: ss
   server: ${config.host}
@@ -467,8 +519,18 @@ function toClash(config) {
   cipher: ${config.method}
   password: ${config.password}
   udp: true
-${pluginStr}
-`.trim();
+`;
+      if (config.plugin) {
+        ssConfig += `  plugin: ${config.plugin}\n`;
+        if (config.pluginOpts) {
+           ssConfig += `  plugin-opts: ${config.pluginOpts}\n`; // Assume it's a valid YAML string
+        } else if (config.obfs) {
+           // Fallback if pluginOpts not directly available but obfs params are
+           ssConfig += `  plugin-opts:\n    mode: ${config.obfs}\n`;
+           if (config.obfsHost) ssConfig += `    host: ${config.obfsHost}\n`;
+        }
+      }
+      return ssConfig.trim();
 
     default:
       throw new Error(`Unsupported type for Clash: ${config.type}`);
@@ -476,41 +538,105 @@ ${pluginStr}
 }
 
 function toSurge(config) {
+  // Surge config generation logic needs to be updated to use full parameters
+  // This is a simplified example, adapt based on Surge documentation
   switch (config.type) {
     case 'vless':
-      let vlessOpts = `tls=true, sni=${config.sni}`;
+      // Surge support for VLESS is limited or requires specific modules/plugins
+      // This is a basic structure, might need adjustments
+      let vlessOpts = `skip-cert-verify=${config.allowInsecure}`;
+      if (config.security === 'tls') {
+         vlessOpts += `, tls=true, sni=${config.sni}`;
+         if(config.alpn) vlessOpts += `, alpn=${config.alpn}`;
+         if(config.fp) vlessOpts += `, server-cert-fingerprint-sha256=${config.fp}`; // Check Surge docs
+      } else if (config.security === 'reality') {
+         // Surge support for REALITY is unclear, might not be supported directly
+         vlessOpts += `, tls=true, sni=${config.sni}`; // Fallback
+      }
       if (config.flow) vlessOpts += `, flow=${config.flow}`;
-      if (config.type === 'ws') vlessOpts += `, ws=true, ws-path=${config.path}, ws-headers=Host:${config.host}`;
+      if (config.type === 'ws') { // network type
+        vlessOpts += `, ws=true, ws-path=${config.path}`;
+        if (config.host_header) vlessOpts += `, ws-headers=Host:${config.host_header}`;
+      }
       return `${config.name} = vless, ${config.host}, ${config.port}, username=${config.uuid}, ${vlessOpts}`;
     case 'vmess':
-      let vmessOpts = `tls=${config.tls}, ws=true, ws-path=${config.path}`;
-      if (config.host) vmessOpts += `, ws-headers=Host:${config.host}`;
+      let vmessOpts = `skip-cert-verify=${config.allowInsecure}`;
+      if (config.tls) {
+         vmessOpts += `, tls=true, sni=${config.sni}`;
+         if(config.alpn) vmessOpts += `, alpn=${config.alpn}`;
+         if(config.fp) vmessOpts += `, server-cert-fingerprint-sha256=${config.fp}`;
+      }
+      if (config.network === 'ws') {
+        vmessOpts += `, ws=true, ws-path=${config.path}`;
+        if (config.host_header) vmessOpts += `, ws-headers=Host:${config.host_header}`;
+      }
       return `${config.name} = vmess, ${config.host}, ${config.port}, username=${config.uuid}, ${vmessOpts}`;
     case 'trojan':
-      let trojanOpts = `sni=${config.sni}`;
-      if (config.type === 'ws') trojanOpts += `, ws=true, ws-path=${config.path}, ws-headers=Host:${config.host}`;
+      let trojanOpts = `skip-cert-verify=${config.allowInsecure}`;
+      trojanOpts += `, sni=${config.sni}`; // Usually TLS
+      if(config.alpn) trojanOpts += `, alpn=${config.alpn}`;
+      if(config.fp) trojanOpts += `, server-cert-fingerprint-sha256=${config.fp}`;
+      if (config.network === 'ws') {
+        trojanOpts += `, ws=true, ws-path=${config.path}`;
+        if (config.host_header) trojanOpts += `, ws-headers=Host:${config.host_header}`;
+      }
       return `${config.name} = trojan, ${config.host}, ${config.port}, password=${config.password}, ${trojanOpts}`;
     case 'ss':
-      return `${config.name} = custom, ${config.host}, ${config.port}, ${config.method}, ${config.password}, https://raw.githubusercontent.com/ConnersHua/SSEncrypt/master/SSEncrypt.module `;
+      // Basic Shadowsocks support
+      if (config.plugin) {
+         // Surge might support plugins differently or via external modules
+         // This is a placeholder
+         return `${config.name} = ss, ${config.host}, ${config.port}, encrypt-method=${config.method}, password=${config.password}, plugin=${config.plugin}`;
+      } else {
+         return `${config.name} = ss, ${config.host}, ${config.port}, encrypt-method=${config.method}, password=${config.password}`;
+      }
     default:
       throw new Error(`Unsupported type for Surge: ${config.type}`);
   }
 }
 
 function toQuantumult(config) {
+  // Quantumult config generation logic needs to be updated to use full parameters
+  // This is a simplified example, adapt based on Quantumult documentation
   switch (config.type) {
     case 'vless':
-      let vlessParams = `tls=true, sni=${config.sni}`;
+      // Quantumult X has better VLESS support
+      let vlessParams = `skip-cert-verify=${config.allowInsecure}`;
+      if (config.security === 'tls') {
+         vlessParams += `, tls=true, sni=${config.sni}`;
+         if(config.alpn) vlessParams += `, alpn=${config.alpn}`;
+         if(config.fp) vlessParams += `, tls-cert-sha256=${config.fp}`; // Check docs
+      } else if (config.security === 'reality') {
+         // Quantumult support for REALITY needs checking
+         vlessParams += `, tls=true, sni=${config.sni}`; // Fallback
+      }
       if (config.flow) vlessParams += `, flow=${config.flow}`;
-      if (config.type === 'ws') vlessParams += `, ws=true, ws-path=${config.path}, ws-header=Host:${config.host}`;
+      if (config.type === 'ws') { // network type
+        vlessParams += `, ws=true, ws-path=${config.path}`;
+        if (config.host_header) vlessParams += `, ws-headers=Host:${config.host_header}`;
+      }
       return `vmess=${config.host}:${config.port}, method=none, password=${config.uuid}, ${vlessParams}, tag=${config.name}`;
     case 'vmess':
-      let vmessParams = `tls=${config.tls}, ws=true, ws-path=${config.path}`;
-      if (config.host) vmessParams += `, ws-header=Host:${config.host}`;
+      let vmessParams = `skip-cert-verify=${config.allowInsecure}`;
+      if (config.tls) {
+         vmessParams += `, tls=${config.tls}, sni=${config.sni}`;
+         if(config.alpn) vmessParams += `, alpn=${config.alpn}`;
+         if(config.fp) vmessParams += `, tls-cert-sha256=${config.fp}`;
+      }
+      if (config.network === 'ws') {
+        vmessParams += `, ws=true, ws-path=${config.path}`;
+        if (config.host_header) vmessParams += `, ws-headers=Host:${config.host_header}`;
+      }
       return `vmess=${config.host}:${config.port}, method=none, password=${config.uuid}, ${vmessParams}, tag=${config.name}`;
     case 'trojan':
-      let trojanParams = `over-tls=true, tls-host=${config.sni}`;
-      if (config.type === 'ws') trojanParams += `, ws=true, ws-path=${config.path}, ws-header=Host:${config.host}`;
+      let trojanParams = `skip-cert-verify=${config.allowInsecure}`;
+      trojanParams += `, over-tls=true, tls-host=${config.sni}`; // Usually TLS
+      if(config.alpn) trojanParams += `, alpn=${config.alpn}`;
+      if(config.fp) trojanParams += `, tls-cert-sha256=${config.fp}`;
+      if (config.network === 'ws') {
+        trojanParams += `, ws=true, ws-path=${config.path}`;
+        if (config.host_header) trojanParams += `, ws-headers=Host:${config.host_header}`;
+      }
       return `trojan=${config.host}:${config.port}, password=${config.password}, ${trojanParams}, tag=${config.name}`;
     case 'ss':
       let ssParams = `encrypt-method=${config.method}`;
@@ -532,57 +658,94 @@ function toSingBox(config) {
   if (config.type === 'vless' || config.type === 'vmess') {
     base.uuid = config.uuid;
     if (config.type === 'vmess') base.alter_id = config.alterId;
-    base.tls = {
-      enabled: config.security !== 'none' || config.tls,
-      server_name: config.sni
-    };
-    if (config.flow) base.flow = config.flow;
-    if (config.type === 'ws' || config.network === 'ws') {
+    // Use network type for transport
+    if (config.network === 'ws') {
       base.transport = {
         type: 'ws',
-        path: config.path,
-        headers: { Host: config.host }
+        path: config.path || '/',
+        headers: config.host_header ? { Host: config.host_header } : {}
       };
     }
+    // Add other transport types if needed (grpc, http, etc.)
+
+    // TLS Configuration
+    if (config.security === 'tls' || config.security === 'reality' || config.tls) {
+      base.tls = {
+        enabled: true,
+        server_name: config.sni || config.host,
+        insecure: config.allowInsecure
+      };
+      if (config.alpn) {
+         base.tls.alpn = config.alpn.split(',').map(a => a.trim()).filter(a => a);
+      }
+      if (config.security === 'reality') {
+          base.tls.utls = { enabled: true, fingerprint: config.fp || "chrome" };
+          base.tls.reality = { enabled: true, public_key: config.pbk, short_id: config.sid };
+          base.tls.flow = config.flow || "";
+      } else if (config.security === 'tls') {
+          base.tls.utls = { enabled: true, fingerprint: config.fp || "chrome" };
+          if (config.flow) base.tls.flow = config.flow;
+      }
+    } else {
+       base.tls = { enabled: false };
+    }
+    if (config.security === 'none' && !config.tls) {
+        base.tls = { enabled: false };
+    }
+
   } else if (config.type === 'trojan') {
     base.password = config.password;
-    base.tls = {
-      enabled: true,
-      server_name: config.sni
-    };
-    if (config.type === 'ws') {
+    // Transport
+    if (config.network === 'ws') {
       base.transport = {
         type: 'ws',
-        path: config.path,
-        headers: { Host: config.host }
+        path: config.path || '/',
+        headers: config.host_header ? { Host: config.host_header } : {}
       };
     }
+    // TLS for Trojan (usually implied)
+    base.tls = {
+      enabled: true,
+      server_name: config.sni || config.host,
+      insecure: config.allowInsecure,
+      utls: { enabled: true, fingerprint: config.fp || "chrome" }
+    };
+    if (config.alpn) {
+       base.tls.alpn = config.alpn.split(',').map(a => a.trim()).filter(a => a);
+    }
+    // Add other TLS params if needed
+
   } else if (config.type === 'ss') {
     base.method = config.method;
     base.password = config.password;
+    // Plugin handling for sing-box can be complex, this is a basic structure
     if (config.plugin) {
-      base.plugin = config.plugin;
-      base.plugin_opts = config.pluginOpts;
+       // Example for simple-obfs or v2ray-plugin (structure might vary)
+       // You'll need to map plugin string and opts correctly
+       // This is a simplified placeholder
+       if (config.plugin.includes('obfs')) {
+          base.plugin = "obfs";
+          base.plugin_opts = {
+              mode: config.obfs || "tls",
+              host: config.obfsHost || config.host
+          };
+       } else if (config.plugin.includes('v2ray')) {
+          base.plugin = "v2ray-plugin"; // or the correct name
+          // Parse pluginOpts or obfs params into plugin_opts object
+          // This requires more detailed parsing logic
+          base.plugin_opts = config.pluginOpts ? JSON.parse(config.pluginOpts) : {};
+       }
+       // Add more plugin conditions as needed
     }
   }
 
   return JSON.stringify(base, null, 2);
 }
 
+
 // ================================
 // 🧩 TEMPLATE SYSTEM — Load from files
 // ================================
-
-async function loadTemplate(format) {
-  try {
-    const templatePath = path.join(__dirname, 'templates', `${format}.json`);
-    const data = await fs.readFile(templatePath, 'utf8');
-    return JSON.parse(data);
-  } catch (error) {
-    console.error(`Gagal load template ${format}:`, error.message);
-    throw new Error(`Template ${format} tidak ditemukan`);
-  }
-}
 
 async function loadTemplateText(format) {
   try {
@@ -593,16 +756,6 @@ async function loadTemplateText(format) {
     console.error(`Gagal load template ${format}:`, error.message);
     throw new Error(`Template ${format} tidak ditemukan`);
   }
-}
-
-async function generateSingBoxConfig(results) {
-  const template = await loadTemplate('singbox');
-  const validProxies = results.filter(r => !r.error).map(r => JSON.parse(r.formats.singbox));
-
-  template.outbounds[0].outbounds.push(...validProxies.map(p => p.tag));
-  template.outbounds.push(...validProxies);
-
-  return JSON.stringify(template, null, 2);
 }
 
 async function generateClashConfig(results) {
@@ -645,86 +798,94 @@ async function generateQuantumultConfig(results) {
 }
 
 // ================================
-// 🔄 ENDPOINT CONVERT — SINGLE & BATCH
+// 🔄 ENDPOINT CONVERT — SINGLE & BATCH (Tampil Langsung, Bukan Download)
 // ================================
 
-app.get('/convert/clash', async (req, res) => {
-  const { link } = req.query;
-  if (!link) return res.status(400).json({ error: "Missing 'link'" });
-  try {
-    const parsed = parseAnyLink(link);
-    const formats = {
-      clash: toClash(parsed),
-      surge: toSurge(parsed),
-      quantumult: toQuantumult(parsed),
-      singbox: toSingBox(parsed)
-    };
-    const config = await generateClashConfig([{ original: parsed, formats, link }]);
-    res.set('Content-Type', 'text/yaml');
-    res.set('Content-Disposition', 'attachment; filename="proxies.yaml"');
-    res.send(config);
-  } catch (error) { res.status(400).json({ error: error.message }); }
-});
+// Endpoint untuk konversi tunggal atau batch dan MENAMPILKAN hasilnya (bukan download)
+app.get('/convert/:format', async (req, res) => {
+  const format = req.params.format;
+  const { link, links } = req.query;
 
-app.get('/convert/surge', async (req, res) => {
-  const { link } = req.query;
-  if (!link) return res.status(400).json({ error: "Missing 'link'" });
-  try {
-    const parsed = parseAnyLink(link);
-    const formats = {
-      clash: toClash(parsed),
-      surge: toSurge(parsed),
-      quantumult: toQuantumult(parsed),
-      singbox: toSingBox(parsed)
-    };
-    const config = await generateSurgeConfig([{ original: parsed, formats, link }]);
-    res.set('Content-Type', 'text/plain');
-    res.set('Content-Disposition', 'attachment; filename="proxies.conf"');
-    res.send(config);
-  } catch (error) { res.status(400).json({ error: error.message }); }
-});
-
-app.get('/convert/quantumult', async (req, res) => {
-  const { link } = req.query;
-  if (!link) return res.status(400).json({ error: "Missing 'link'" });
-  try {
-    const parsed = parseAnyLink(link);
-    const formats = {
-      clash: toClash(parsed),
-      surge: toSurge(parsed),
-      quantumult: toQuantumult(parsed),
-      singbox: toSingBox(parsed)
-    };
-    const config = await generateQuantumultConfig([{ original: parsed, formats, link }]);
-    res.set('Content-Type', 'text/plain');
-    res.set('Content-Disposition', 'attachment; filename="proxies.conf"');
-    res.send(config);
-  } catch (error) { res.status(400).json({ error: error.message }); }
-});
-
-app.get('/convert/singbox', async (req, res) => {
-  const { link } = req.query;
-  if (!link) return res.status(400).json({ error: "Missing 'link'" });
-  try {
-    const parsed = parseAnyLink(link);
-    const formats = {
-      clash: toClash(parsed),
-      surge: toSurge(parsed),
-      quantumult: toQuantumult(parsed),
-      singbox: toSingBox(parsed)
-    };
-    const config = await generateSingBoxConfig([{ original: parsed, formats, link }]);
-    res.set('Content-Type', 'application/json');
-    res.set('Content-Disposition', 'attachment; filename="proxies.json"');
-    res.send(config);
-  } catch (error) { res.status(400).json({ error: error.message }); }
-});
-
-app.get('/convert', async (req, res) => {
-  const { format, links } = req.query;
-  if (!format || !['clash', 'surge', 'quantumult', 'singbox'].includes(format)) {
-    return res.status(400).json({ error: "Parameter 'format' wajib: clash, surge, quantumult, singbox" });
+  if (!['clash', 'surge', 'quantumult', 'singbox'].includes(format)) {
+    return res.status(400).json({ error: "Format tidak didukung. Gunakan: clash, surge, quantumult, singbox" });
   }
+
+  let linkArray = [];
+  if (links) {
+    linkArray = links.split(',').map(l => l.trim()).filter(l => l.length > 0);
+  } else if (link) {
+    linkArray = [link.trim()];
+  } else {
+    return res.status(400).json({ error: "Parameter 'link' atau 'links' wajib diisi" });
+  }
+
+  if (linkArray.length === 0) return res.status(400).json({ error: "Tidak ada link valid ditemukan" });
+
+  try {
+    const results = [];
+    for (const link of linkArray) {
+      try {
+        const parsed = parseAnyLink(link);
+        const formats = {
+          clash: toClash(parsed),
+          surge: toSurge(parsed),
+          quantumult: toQuantumult(parsed),
+          singbox: toSingBox(parsed)
+        };
+        results.push({ original: parsed, formats, link });
+      } catch (error) {
+        results.push({ error: error.message, link });
+      }
+    }
+
+    // Tentukan MIME type berdasarkan format
+    const mimeTypes = {
+      clash: 'text/yaml',
+      surge: 'text/plain',
+      quantumult: 'text/plain',
+      singbox: 'application/json'
+    };
+
+    // Jika hanya 1 link, tampilkan konfigurasinya langsung
+    if (linkArray.length === 1 && !results[0].error) {
+        res.set('Content-Type', mimeTypes[format]);
+        // HAPUS Content-Disposition agar tidak download
+        // res.set('Content-Disposition', 'attachment; filename="proxy.conf"');
+        return res.send(results[0].formats[format]);
+    }
+
+    // Jika lebih dari 1 link atau ada error, tampilkan sebagai daftar
+    // Atau, jika ingin selalu tampilkan daftar hasil, gunakan blok ini:
+    // if (format === 'singbox') {
+    //    res.set('Content-Type', mimeTypes[format]);
+    //    const validConfigs = results.filter(r => !r.error).map(r => JSON.parse(r.formats.singbox));
+    //    return res.send(JSON.stringify(validConfigs, null, 2));
+    // } else {
+    //    res.set('Content-Type', 'text/plain');
+    //    const validConfigs = results.filter(r => !r.error).map(r => r.formats[format]).join('\n\n---\n\n');
+    //    return res.send(validConfigs);
+    // }
+
+    // Atau, tampilkan hasil JSON untuk semua kasus batch/single-error
+    res.set('Content-Type', 'application/json');
+    return res.json({ format: format, results: results });
+
+
+  } catch (error) {
+    console.error("Error di /convert/:format:", error);
+    res.status(500).json({ error: "Terjadi kesalahan internal server." });
+  }
+});
+
+// Endpoint untuk konversi batch dengan template lengkap dan DOWNLOAD
+app.get('/convert/template/:format', async (req, res) => {
+  const format = req.params.format;
+  const { links } = req.query;
+
+  if (!['clash', 'surge', 'quantumult', 'singbox'].includes(format)) {
+    return res.status(400).json({ error: "Format tidak didukung. Gunakan: clash, surge, quantumult, singbox" });
+  }
+
   if (!links) return res.status(400).json({ error: "Parameter 'links' wajib diisi" });
 
   const linkArray = links.split(',').map(l => l.trim()).filter(l => l.length > 0);
@@ -752,7 +913,20 @@ app.get('/convert', async (req, res) => {
       case 'clash': config = await generateClashConfig(results); break;
       case 'surge': config = await generateSurgeConfig(results); break;
       case 'quantumult': config = await generateQuantumultConfig(results); break;
-      case 'singbox': config = await generateSingBoxConfig(results); break;
+      case 'singbox':
+        // Special handling for singbox full config
+        const templatePath = path.join(__dirname, 'templates', `singbox.json`);
+        let template;
+        try {
+            template = JSON.parse(await fs.readFile(templatePath, 'utf8'));
+        } catch (e) {
+            template = { outbounds: [{ tag: "proxy", type: "selector", outbounds: [] }] }; // Default template
+        }
+        const validProxies = results.filter(r => !r.error).map(r => JSON.parse(r.formats.singbox));
+        template.outbounds[0].outbounds.push(...validProxies.map(p => p.tag));
+        template.outbounds.push(...validProxies);
+        config = JSON.stringify(template, null, 2);
+        break;
     }
 
     const mimeTypes = {
@@ -773,10 +947,12 @@ app.get('/convert', async (req, res) => {
     res.set('Content-Disposition', `attachment; filename="proxies.${extensions[format]}"`);
     res.send(config);
   } catch (error) {
+    console.error("Error di /convert/template/:format:", error);
     res.status(500).json({ error: error.message });
   }
 });
 
+// Endpoint POST untuk batch convert (opsional, jika ingin body JSON)
 app.post('/convert/batch', async (req, res) => {
   const { format, links } = req.body;
   if (!Array.isArray(links) || links.length === 0) {
@@ -808,7 +984,19 @@ app.post('/convert/batch', async (req, res) => {
       case 'clash': config = await generateClashConfig(results); break;
       case 'surge': config = await generateSurgeConfig(results); break;
       case 'quantumult': config = await generateQuantumultConfig(results); break;
-      case 'singbox': config = await generateSingBoxConfig(results); break;
+      case 'singbox':
+        const templatePath = path.join(__dirname, 'templates', `singbox.json`);
+        let template;
+        try {
+            template = JSON.parse(await fs.readFile(templatePath, 'utf8'));
+        } catch (e) {
+            template = { outbounds: [{ tag: "proxy", type: "selector", outbounds: [] }] };
+        }
+        const validProxies = results.filter(r => !r.error).map(r => JSON.parse(r.formats.singbox));
+        template.outbounds[0].outbounds.push(...validProxies.map(p => p.tag));
+        template.outbounds.push(...validProxies);
+        config = JSON.stringify(template, null, 2);
+        break;
     }
 
     const mimeTypes = {
@@ -837,7 +1025,7 @@ app.post('/convert/batch', async (req, res) => {
 app.use('*', (req, res) => {
   res.status(404).json({
     success: false,
-    error: 'Endpoint not found. Use /health?proxy=IP:PORT or /convert?format=clash&links=...',
+    error: 'Endpoint not found. Use /health?proxy=IP:PORT or /convert/:format?link=... or /convert/:format?links=...',
   });
 });
 
@@ -862,8 +1050,8 @@ process.on('SIGINT', () => {
   });
 });
 
-// ✅ Error Handler
+// ✅ Error Handler (Harus ditempatkan paling bawah)
 app.use((error, req, res, next) => {
-  console.error(error.stack);
+  console.error("Unhandled error:", error.stack);
   res.status(500).json({ error: 'Something went wrong!' });
 });
