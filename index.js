@@ -16,20 +16,6 @@ app.use(cors());
 app.use(express.json());
 app.use(express.text());
 
-// ✅ Rate Limiting
-/*
-const rateLimit = require('express-rate-limit');
-const limiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 1000,
-  skipFailedRequests: true,
-  validate: { xForwardedForHeader: false }
-});
-*/
-app.use('/health');
-app.use('/convert');
-app.use('/convert-batch');
-
 // ✅ Logging
 app.use((req, res, next) => {
   const now = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
@@ -440,11 +426,16 @@ function toClash(config) {
 `.trim();
 
     case 'trojan':
-      let trojanWsHeaders = '';
-      if (config.type === 'ws' && config.host) {
-        trojanWsHeaders = `  ws-headers:
+      let network = config.type === 'ws' ? 'ws' : 'tcp';
+      let wsPart = '';
+      if (network === 'ws') {
+        wsPart = `
+  network: ws
+  ws-path: ${config.path}
+  ws-headers:
     Host: ${config.host}`;
       }
+
       return `
 - name: "${config.name.replace(/"/g, '\\"')}"
   type: trojan
@@ -453,7 +444,7 @@ function toClash(config) {
   password: ${config.password}
   tls: true
   sni: ${config.sni}
-  ${config.type === 'ws' ? `network: ws\n  ws-path: ${config.path}\n${trojanWsHeaders}` : ''}
+  ${wsPart}
   udp: true
   skip-cert-verify: true
 `.trim();
@@ -498,7 +489,7 @@ function toSurge(config) {
       if (config.type === 'ws') trojanOpts += `, ws=true, ws-path=${config.path}, ws-headers=Host:${config.host}`;
       return `${config.name} = trojan, ${config.host}, ${config.port}, password=${config.password}, ${trojanOpts}`;
     case 'ss':
-      return `${config.name} = custom, ${config.host}, ${config.port}, ${config.method}, ${config.password}, https://raw.githubusercontent.com/ConnersHua/SSEncrypt/master/SSEncrypt.module`;
+      return `${config.name} = custom, ${config.host}, ${config.port}, ${config.method}, ${config.password}, https://raw.githubusercontent.com/ConnersHua/SSEncrypt/master/SSEncrypt.module `;
     default:
       throw new Error(`Unsupported type for Surge: ${config.type}`);
   }
