@@ -1,0 +1,100 @@
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "tag": "google-dns",
+        "address": "tls://8.8.8.8"
+      },
+      {
+        "tag": "cloudflare-dns",
+        "address": "https://1.1.1.1/dns-query"
+      },
+      {
+        "tag": "block-dns",
+        "address": "rcode://success"
+      }
+    ],
+    "rules": [
+      {
+        "rule_set": [
+          "geosite-malicious",
+          "geoip-malicious"
+        ],
+        "server": "block-dns"
+      }
+    ],
+    "final": "google-dns"
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "tun0",
+      "address": "172.19.0.1/30",
+      "auto_route": true,
+      "strict_route": true,
+      "sniff": true
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "selector",
+      "tag": "🚀 PROXY",
+      "outbounds": [
+        "direct"
+      ],
+      "default": "direct"
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "protocol": "dns",
+        "outbound": "direct"
+      },
+      {
+        "rule_set": [
+          "geosite-malicious",
+          "geoip-malicious"
+        ],
+        "outbound": "block"
+      },
+      {
+        "geoip": "private",
+        "outbound": "direct"
+      }
+    ],
+    "rule_set": [
+      {
+        "type": "remote",
+        "tag": "geosite-malicious",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-malicious.srs",
+        "download_detour": "direct"
+      },
+      {
+        "type": "remote",
+        "tag": "geoip-malicious",
+        "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-malicious.srs",
+        "download_detour": "direct"
+      }
+    ],
+    "final": "🚀 PROXY"
+  },
+  "experimental": {
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090"
+    }
+  }
+}
