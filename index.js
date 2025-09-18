@@ -1,11 +1,9 @@
-// index.js — versi PRO+: stats, alerting, auto-retry, metrics, graceful shutdown, env validation
+// index.js — versi PRO+ FINAL: stats, alerting, auto-retry, metrics, graceful shutdown, env validation, TIMEZONE FIX
 
 const express = require('express');
 const net = require('net');
 const cors = require('cors');
-
-// ✅ Poin 6: Gunakan node-fetch untuk kompatibilitas Node.js < 18
-const fetch = require('node-fetch');
+const fetch = require('node-fetch'); // ✅ Untuk Node.js < 18
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -21,16 +19,17 @@ let successCount = 0;
 const startTime = Date.now();
 
 // ================================
-// 🤖 TELEGRAM ALERT SETUP
+// 🤖 TELEGRAM ALERT SETUP — DIPERBAIKI!
 // ================================
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN; // simpan di Railway Variables
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;     // simpan di Railway Variables
 
-// ✅ Poin 8: Validasi environment variables di awal
+// ✅ Validasi environment variables
 if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
   console.warn("⚠️ Telegram alert disabled — TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set in environment variables.");
 }
 
+// ✅ Fungsi kirim alert dengan ZONA WAKTU LOKAL (Asia/Jakarta)
 async function sendTelegramAlert(message) {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
     console.warn("⚠️ Telegram alert skipped — token or chat_id not set");
@@ -38,20 +37,35 @@ async function sendTelegramAlert(message) {
   }
 
   try {
-    // ✅ Poin 1: PERBAIKAN KRITIS — hapus spasi setelah 'bot'
+    // ✅ PERBAIKAN KRITIS: HAPUS SPASI SETELAH /bot
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-    await fetch(url, {
+
+    // ✅ Dapatkan waktu lokal (WIB)
+    const localTime = new Date().toLocaleString('id-ID', {
+      timeZone: 'Asia/Jakarta',
+      hour12: false
+    });
+
+    const fullMessage = `[🚨 PROXY DOWN ALERT - WIB]\n${localTime}\n\n${message}`;
+
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: TELEGRAM_CHAT_ID,
-        text: `[PROXY DOWN ALERT]\n${message}`,
+        text: fullMessage,
         parse_mode: 'Markdown',
       }),
     });
-    console.log("✅ Telegram alert sent");
+
+    if (response.ok) {
+      console.log("✅ [TELEGRAM] Alert berhasil dikirim");
+    } else {
+      const errorText = await response.text();
+      console.error("❌ [TELEGRAM] Gagal kirim alert:", errorText);
+    }
   } catch (error) {
-    console.error("❌ Failed to send Telegram alert:", error.message);
+    console.error("❌ [TELEGRAM] Error saat kirim alert:", error.message);
   }
 }
 
@@ -91,7 +105,7 @@ async function testTCPWithRetry(host, port, maxRetries = 2, baseTimeout = 5000) 
 }
 
 // ================================
-// 🔍 ENDPOINT: /health?proxy=IP:PORT
+// 🔍 ENDPOINT: /health?proxy=IP:PORT — DIPERBAIKI!
 // → TCP check + auto-retry + alerting + stats tracking
 // ================================
 app.get('/health', async (req, res) => {
@@ -118,18 +132,26 @@ app.get('/health', async (req, res) => {
   }
 
   const portNum = parseInt(port, 10);
-  const testStart = Date.now();
 
+  // ✅ Validasi port range
+  if (portNum < 1 || portNum > 65535) {
+    return res.status(400).json({
+      success: false,
+      error: 'Port must be between 1 and 65535',
+    });
+  }
+
+  const testStart = Date.now();
   const maxRetries = parseInt(req.query.retries) || 2;
   const result = await testTCPWithRetry(host, portNum, maxRetries);
-
   const latency = Date.now() - testStart;
   const success = result.success;
 
   if (success) {
     successCount++;
   } else {
-    const alertMsg = `Proxy DOWN: ${proxy}\nLatency: ${latency}ms\nAttempt: ${result.attempt}\nError: ${result.error}\nTime: ${new Date().toISOString()}`;
+    // ✅ Kirim alert dengan detail
+    const alertMsg = `Proxy: ${proxy}\nLatency: ${latency}ms\nAttempt: ${result.attempt}\nError: ${result.error}`;
     sendTelegramAlert(alertMsg);
   }
 
@@ -139,7 +161,7 @@ app.get('/health', async (req, res) => {
     status: success ? 'UP' : 'DOWN',
     latency_ms: latency,
     attempt: result.attempt,
-    timestamp: new Date().toISOString(),
+    timestamp: new Date().toISOString(), // Tetap UTC untuk konsistensi API
   };
 
   if (!success) {
@@ -169,13 +191,12 @@ app.get('/stats', (req, res) => {
 });
 
 // ================================
-// 🩺 ENDPOINT: /metrics (Prometheus format — untuk monitoring)
+// 🩺 ENDPOINT: /metrics (Prometheus format)
 // ================================
 app.get('/metrics', (req, res) => {
   const uptimeSeconds = Math.floor((Date.now() - startTime) / 1000);
   const failureCount = totalRequests - successCount;
 
-  // ✅ Poin 4: Format sesuai standar Prometheus
   const metrics = `
 # HELP vortex_uptime_seconds Service uptime in seconds
 # TYPE vortex_uptime_seconds gauge
@@ -203,10 +224,14 @@ vortex_success_rate_ratio ${totalRequests > 0 ? (successCount / totalRequests) :
 });
 
 // ================================
-// 🧪 ENDPOINT: /ping (health check untuk load balancer/monitoring eksternal)
+// 🧪 ENDPOINT: /ping
 // ================================
 app.get('/ping', (req, res) => {
-  res.status(200).json({ status: 'Alive', uptime: Math.floor((Date.now() - startTime) / 1000) });
+  res.status(200).json({ 
+    status: 'Alive', 
+    uptime_seconds: Math.floor((Date.now() - startTime) / 1000),
+    time_wib: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }) // ✅ Tambahkan waktu lokal
+  });
 });
 
 // Fallback
@@ -217,16 +242,16 @@ app.use('*', (req, res) => {
   });
 });
 
-// ✅ Poin 7: Graceful shutdown
+// ✅ Graceful shutdown
 const server = app.listen(PORT, () => {
-  console.log(`✅ Proxy Health Checker running on port ${PORT}`);
+  console.log(`✅ [WIB] Proxy Health Checker running on port ${PORT} — ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}`);
   console.log(`📊 Stats: /stats`);
   console.log(`🩺 Metrics: /metrics`);
   console.log(`🏓 Ping: /ping`);
 });
 
 process.on('SIGTERM', () => {
-  console.log('SIGTERM received. Shutting down gracefully...');
+  console.log('✅ [WIB] SIGTERM received — shutting down gracefully... ', new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }));
   server.close(() => {
     console.log('✅ Server closed gracefully.');
     process.exit(0);
@@ -234,7 +259,7 @@ process.on('SIGTERM', () => {
 });
 
 process.on('SIGINT', () => {
-  console.log('SIGINT received. Shutting down...');
+  console.log('✅ [WIB] SIGINT received — shutting down... ', new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' }));
   server.close(() => {
     console.log('✅ Server closed.');
     process.exit(0);
