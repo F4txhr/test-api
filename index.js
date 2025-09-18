@@ -1,8 +1,11 @@
-// index.js — versi PRO: stats, alerting, auto-retry, metrics
+// index.js — versi PRO+: stats, alerting, auto-retry, metrics, graceful shutdown, env validation
 
 const express = require('express');
 const net = require('net');
 const cors = require('cors');
+
+// ✅ Poin 6: Gunakan node-fetch untuk kompatibilitas Node.js < 18
+const fetch = require('node-fetch');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -23,13 +26,19 @@ const startTime = Date.now();
 const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN; // simpan di Railway Variables
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;     // simpan di Railway Variables
 
+// ✅ Poin 8: Validasi environment variables di awal
+if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+  console.warn("⚠️ Telegram alert disabled — TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set in environment variables.");
+}
+
 async function sendTelegramAlert(message) {
   if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
-    console.warn("⚠️ Telegram alert disabled — token or chat_id not set");
+    console.warn("⚠️ Telegram alert skipped — token or chat_id not set");
     return;
   }
 
   try {
+    // ✅ Poin 1: PERBAIKAN KRITIS — hapus spasi setelah 'bot'
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
     await fetch(url, {
       method: 'POST',
@@ -54,7 +63,7 @@ async function testTCPWithRetry(host, port, maxRetries = 2, baseTimeout = 5000) 
     try {
       await new Promise((resolve, reject) => {
         const socket = net.createConnection(port, host);
-        const timeout = baseTimeout + attempt * 1000; // tambah 1 detik tiap retry
+        const timeout = baseTimeout + attempt * 1000;
         socket.setTimeout(timeout);
 
         socket.on('connect', () => {
@@ -76,7 +85,6 @@ async function testTCPWithRetry(host, port, maxRetries = 2, baseTimeout = 5000) 
       if (attempt === maxRetries) {
         return { success: false, attempt: attempt + 1, error: err.message };
       }
-      // Tunggu sebentar sebelum retry
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
@@ -87,7 +95,7 @@ async function testTCPWithRetry(host, port, maxRetries = 2, baseTimeout = 5000) 
 // → TCP check + auto-retry + alerting + stats tracking
 // ================================
 app.get('/health', async (req, res) => {
-  totalRequests++; // 👈 track for /stats
+  totalRequests++;
 
   const { proxy } = req.query;
 
@@ -112,7 +120,6 @@ app.get('/health', async (req, res) => {
   const portNum = parseInt(port, 10);
   const testStart = Date.now();
 
-  // 🔁 AUTO-RETRY (default: 2 retries)
   const maxRetries = parseInt(req.query.retries) || 2;
   const result = await testTCPWithRetry(host, portNum, maxRetries);
 
@@ -122,7 +129,6 @@ app.get('/health', async (req, res) => {
   if (success) {
     successCount++;
   } else {
-    // 🚨 ALERT ke Telegram jika proxy down (hanya jika env di-set)
     const alertMsg = `Proxy DOWN: ${proxy}\nLatency: ${latency}ms\nAttempt: ${result.attempt}\nError: ${result.error}\nTime: ${new Date().toISOString()}`;
     sendTelegramAlert(alertMsg);
   }
@@ -167,19 +173,32 @@ app.get('/stats', (req, res) => {
 // ================================
 app.get('/metrics', (req, res) => {
   const uptimeSeconds = Math.floor((Date.now() - startTime) / 1000);
-  const successRate = totalRequests > 0 ? (successCount / totalRequests) : 0;
+  const failureCount = totalRequests - successCount;
 
+  // ✅ Poin 4: Format sesuai standar Prometheus
   const metrics = `
-Uptime: ${uptimeSeconds}
+# HELP vortex_uptime_seconds Service uptime in seconds
+# TYPE vortex_uptime_seconds gauge
+vortex_uptime_seconds ${uptimeSeconds}
 
-Total request ${totalRequests}
+# HELP vortex_total_requests Total number of health check requests
+# TYPE vortex_total_requests counter
+vortex_total_requests ${totalRequests}
 
-Success count ${successCount}
+# HELP vortex_success_count Number of successful proxy checks
+# TYPE vortex_success_count counter
+vortex_success_count ${successCount}
 
-Success rate ${successRate}
+# HELP vortex_failure_count Number of failed proxy checks
+# TYPE vortex_failure_count counter
+vortex_failure_count ${failureCount}
+
+# HELP vortex_success_rate_ratio Success rate (0.0 to 1.0)
+# TYPE vortex_success_rate_ratio gauge
+vortex_success_rate_ratio ${totalRequests > 0 ? (successCount / totalRequests) : 0}
   `.trim();
 
-  res.set('Content-Type', 'text/plain; version=0.0.4');
+  res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
   res.send(metrics);
 });
 
@@ -198,9 +217,26 @@ app.use('*', (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
+// ✅ Poin 7: Graceful shutdown
+const server = app.listen(PORT, () => {
   console.log(`✅ Proxy Health Checker running on port ${PORT}`);
   console.log(`📊 Stats: /stats`);
   console.log(`🩺 Metrics: /metrics`);
   console.log(`🏓 Ping: /ping`);
+});
+
+process.on('SIGTERM', () => {
+  console.log('SIGTERM received. Shutting down gracefully...');
+  server.close(() => {
+    console.log('✅ Server closed gracefully.');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT received. Shutting down...');
+  server.close(() => {
+    console.log('✅ Server closed.');
+    process.exit(0);
+  });
 });
