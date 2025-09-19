@@ -246,17 +246,28 @@ function parseSS(link) {
     obfsHost = params.get('obfs-host') || '';
   }
 
+  // Pastikan name/tag diambil dari fragment
+  let name = 'SS Server';
+  if (link.includes('#')) {
+    try {
+      name = decodeURIComponent(link.split('#')[1]);
+    } catch (e) {
+      console.warn("Gagal decode fragment untuk SS link:", e.message);
+      name = link.split('#')[1] || name;
+    }
+  }
+
   return {
     type: 'ss',
     method,
     password,
     host,
     port,
-    plugin,
-    pluginOpts,
+    plugin, // Simpan plugin string utuh
+    pluginOpts, // Simpan pluginOpts jika ada
     obfs,
     obfsHost,
-    name: link.includes('#') ? decodeURIComponent(link.split('#')[1]) : 'SS Server'
+    name: name
   };
 }
 
@@ -279,7 +290,7 @@ function parseVLESS(link) {
     // Split params and fragment
     const paramParts = paramString.split('#');
     const queryParams = paramParts[0];
-    fragmentName = paramParts[1] ? decodeURIComponent(paramParts[1]) : '';
+    fragmentName = paramParts[1] ? paramParts[1] : '';
 
     if (queryParams) {
       queryParams.split('&').forEach(pair => {
@@ -291,8 +302,16 @@ function parseVLESS(link) {
     }
   }
 
-  // Prioritize fragment name, fallback to ps param if exists
-  const name = fragmentName || params.ps || 'VLESS Server';
+  // Decode fragment name/tag
+  let name = 'VLESS Server';
+  if (fragmentName) {
+    try {
+      name = decodeURIComponent(fragmentName);
+    } catch (e) {
+      console.warn("Gagal decode fragment untuk VLESS link:", e.message);
+      name = fragmentName;
+    }
+  }
 
   return {
     type: 'vless',
@@ -325,6 +344,16 @@ function parseVMess(link) {
   try {
     jsonStr = Buffer.from(base64, 'base64').toString('utf8');
     const obj = JSON.parse(jsonStr);
+    // Decode name/tag dari ps
+    let name = 'VMess Server';
+    if (obj.ps) {
+      try {
+         name = decodeURIComponent(obj.ps);
+      } catch (e) {
+         console.warn("Gagal decode 'ps' untuk VMess link:", e.message);
+         name = obj.ps;
+      }
+    }
     return {
       type: 'vmess',
       uuid: obj.id,
@@ -340,7 +369,7 @@ function parseVMess(link) {
       tls: obj.tls === 'tls',
       alpn: obj.alpn || '',
       fp: obj.fp || '',
-      name: obj.ps || 'VMess Server'
+      name: name
     };
   } catch (e) {
     throw new Error('Invalid VMess base64 JSON');
@@ -352,42 +381,81 @@ function parseTrojan(link) {
     throw new Error('Bukan link Trojan');
   }
 
-  const match = link.match(/^trojan:\/\/([^@]+)@([^#?]+)(\?[^#]+)?(#.*)?$/);
-  if (!match) {
-      throw new Error('Invalid Trojan link format');
+  // Perbaikan ekstraksi yang lebih robust
+  const cleanLink = link.substring('trojan://'.length);
+  
+  const paramStartIndex = cleanLink.indexOf('?');
+  const fragmentStartIndex = cleanLink.indexOf('#');
+  
+  let userinfo_and_serverinfo = '';
+  let paramString = '';
+  let fragment = '';
+
+  if (paramStartIndex === -1 && fragmentStartIndex === -1) {
+      userinfo_and_serverinfo = cleanLink;
+  } else if (paramStartIndex !== -1 && fragmentStartIndex === -1) {
+      userinfo_and_serverinfo = cleanLink.substring(0, paramStartIndex);
+      paramString = cleanLink.substring(paramStartIndex + 1);
+  } else if (paramStartIndex === -1 && fragmentStartIndex !== -1) {
+      userinfo_and_serverinfo = cleanLink.substring(0, fragmentStartIndex);
+      fragment = cleanLink.substring(fragmentStartIndex + 1);
+  } else {
+      userinfo_and_serverinfo = cleanLink.substring(0, paramStartIndex);
+      if (fragmentStartIndex > paramStartIndex) {
+          paramString = cleanLink.substring(paramStartIndex + 1, fragmentStartIndex);
+          fragment = cleanLink.substring(fragmentStartIndex + 1);
+      } else {
+          paramString = cleanLink.substring(paramStartIndex + 1);
+      }
   }
 
-  const [_, userinfo, serverinfo, paramString, fragment] = match;
+  const [userinfo, serverinfo] = userinfo_and_serverinfo.split('@');
+  if (!userinfo || !serverinfo) {
+      throw new Error('Invalid Trojan link format: Missing userinfo or serverinfo');
+  }
 
-  const [host, port] = serverinfo.split(':');
+  const [host, portStr] = serverinfo.split(':');
+  const port = parseInt(portStr, 10);
+  if (isNaN(port)) {
+      throw new Error('Invalid Trojan link format: Invalid port');
+  }
+
   const params = {};
-
   if (paramString) {
-    const queryParams = paramString.substring(1).split('#')[0]; // Remove leading '?'
-    queryParams.split('&').forEach(pair => {
-      const [key, value] = pair.split('=');
-      if (key) {
-        params[decodeURIComponent(key)] = decodeURIComponent(value || '');
+    paramString.split('&').forEach(pair => {
+      if (pair) {
+        const [key, value = ''] = pair.split('=');
+        if (key) {
+          params[decodeURIComponent(key)] = decodeURIComponent(value);
+        }
       }
     });
   }
 
-  const name = fragment ? decodeURIComponent(fragment.substring(1)) : 'Trojan Server'; // Remove leading '#'
+  let name = 'Trojan Server';
+  if (fragment) {
+    try {
+      name = decodeURIComponent(fragment);
+    } catch (e) {
+      console.warn("Gagal mendecode fragment/tag untuk Trojan link:", e.message);
+      name = fragment || name;
+    }
+  }
 
   return {
     type: 'trojan',
     password: userinfo,
     host,
-    port: parseInt(port, 10),
+    port: port,
     security: 'tls', // Trojan biasanya TLS
-    network: params.type || 'tcp', // Gunakan 'network' untuk konsistensi
+    network: params.type || 'tcp',
     path: params.path || (params.type === 'ws' ? '/' : ''),
-    host_header: params.host || host, // Simpan host header secara eksplisit
+    host_header: params.host || host,
     sni: params.sni || params.host || host,
     alpn: params.alpn || '',
     fp: params.fp || '',
     allowInsecure: params.allowInsecure === '1' || params.allowInsecure === 'true' || false,
-    name,
+    name: name,
   };
 }
 
@@ -438,7 +506,6 @@ function toClash(config) {
         vlessConfig += `  tls: false\n`;
       }
 
-      // Tangani berdasarkan network type
       if (config.network === 'ws') {
         vlessConfig += `  network: ws\n`;
         vlessConfig += `  ws-path: ${config.path || '/'}\n`;
@@ -446,9 +513,6 @@ function toClash(config) {
           vlessConfig += `  ws-headers:\n    host: ${config.host_header}\n`;
         }
       }
-      // Untuk 'tcp' dan tipe lain yang tidak memerlukan konfigurasi khusus di Clash,
-      // tidak perlu menambahkan baris apa pun. Clash akan menggunakan default (tcp).
-
       return vlessConfig;
 
     case 'vmess':
@@ -491,7 +555,6 @@ function toClash(config) {
   skip-cert-verify: ${!!config.allowInsecure}
   tls: true
 `;
-      // Trojan biasanya TLS
       if(config.sni) trojanConfig += `  sni: ${config.sni}\n`;
       if(config.alpn) trojanConfig += `  alpn: [${config.alpn.split(',').map(a => `"${a.trim()}"`).join(', ')}]\n`;
       if(config.fp) trojanConfig += `  fingerprint: ${config.fp}\n`;
@@ -517,7 +580,6 @@ function toClash(config) {
 `;
       if (config.plugin) {
         ssConfig += `  plugin: ${config.plugin}\n`;
-        // Format plugin_opts untuk Clash
         if (config.plugin.includes('v2ray-plugin') || config.plugin.includes('obfs')) {
            const opts = {};
            if (config.plugin.includes(';')) {
@@ -541,19 +603,16 @@ function toClash(config) {
                  }
               }
            } else if (config.obfs) {
-              // Fallback jika pluginOpts tidak ada tapi ada obfs params
               ssConfig += `  plugin-opts:\n    mode: ${config.obfs}\n`;
               if (config.obfsHost) ssConfig += `    host: ${config.obfsHost}\n`;
            }
         } else {
-           // Untuk plugin lain, mungkin perlu penanganan khusus
-           ssConfig += `  plugin-opts: {}\n`; // Placeholder
+           ssConfig += `  plugin-opts: {}\n`;
         }
       }
       return ssConfig;
 
     default:
-      // Pesan error yang lebih umum
       throw new Error(`Tidak dapat mengkonversi protokol '${config.type}' ke format Clash.`);
   }
 }
@@ -598,11 +657,7 @@ function toSurge(config) {
       }
       return `${config.name} = trojan, ${config.host}, ${config.port}, password=${config.password}, ${trojanOpts}`;
     case 'ss':
-      // Format Shadowsocks untuk Surge
       if (config.plugin) {
-         // Surge biasanya menggunakan module untuk plugin
-         // Kita bisa membuat string placeholder atau mencoba memetakan parameter
-         // Ini adalah contoh sederhana
          return `${config.name} = custom, ${config.host}, ${config.port}, ${config.method}, ${config.password}, https://raw.githubusercontent.com/ConnersHua/SSEncrypt/master/SSEncrypt.module`;
       } else {
          return `${config.name} = ss, ${config.host}, ${config.port}, ${config.method}, ${config.password}`;
@@ -654,8 +709,6 @@ function toQuantumult(config) {
     case 'ss':
       let ssParams = `encrypt-method=${config.method}, password=${config.password}`;
       if (config.obfs) ssParams += `, obfs=${config.obfs}, obfs-host=${config.obfsHost}`;
-      // Quantumult juga bisa menggunakan plugin, tapi formatnya berbeda
-      // Kita fokus pada format dasar dulu
       return `shadowsocks=${config.host}:${config.port}, method=${config.method}, password=${config.password}, ${ssParams}, tag=${config.name}`;
     default:
       throw new Error(`Unsupported type for Quantumult: ${config.type}`);
@@ -664,7 +717,7 @@ function toQuantumult(config) {
 
 function toSingBox(config) {
   let base = {
-    tag: config.name, // <-- Ini yang penting, menggunakan tag yang sudah dimodifikasi
+    tag: config.name, // <-- Ini yang penting, menggunakan tag yang sudah dimodifikasi/unik
     type: config.type === 'ss' ? 'shadowsocks' : config.type,
     server: config.host,
     server_port: config.port
@@ -673,7 +726,7 @@ function toSingBox(config) {
   if (config.type === 'vless' || config.type === 'vmess') {
     base.uuid = config.uuid;
     if (config.type === 'vmess') base.alter_id = config.alterId;
-    // Use network type for transport
+    // --- Perbaikan Utama: Tambahkan transport jika network bukan tcp default ---
     if (config.network === 'ws') {
       base.transport = {
         type: 'ws',
@@ -681,7 +734,8 @@ function toSingBox(config) {
         headers: config.host_header ? { host: config.host_header } : {}
       };
     }
-    // Add other transport types if needed (grpc, http, etc.)
+    // Tambahkan penanganan untuk grpc, http, dsb. jika diperlukan di masa depan
+    // else if (config.network === 'grpc') { ... }
 
     // TLS Configuration
     if (config.security === 'tls' || config.security === 'reality' || config.tls) {
@@ -710,7 +764,7 @@ function toSingBox(config) {
 
   } else if (config.type === 'trojan') {
     base.password = config.password;
-    // Transport
+    // --- Perbaikan Utama: Tambahkan transport jika network bukan tcp default ---
     if (config.network === 'ws') {
       base.transport = {
         type: 'ws',
@@ -728,12 +782,11 @@ function toSingBox(config) {
     if (config.alpn) {
        base.tls.alpn = config.alpn.split(',').map(a => a.trim()).filter(a => a);
     }
-    // Add other TLS params if needed
 
   } else if (config.type === 'ss') {
     base.method = config.method;
     base.password = config.password;
-    // Plugin handling for sing-box
+    // --- Perbaikan Utama: Tambahkan plugin dan plugin_opts ---
     if (config.plugin) {
        // Parse plugin string like: v2ray-plugin;tls;mode=websocket;host=...;path=...
        const pluginParts = config.plugin.split(';');
@@ -753,14 +806,11 @@ function toSingBox(config) {
                 else if (key === 'tls') base.plugin_opts.tls = value === 'true';
                 else if (key === 'mux') base.plugin_opts.mux = parseInt(value, 10) || 0;
              } else {
-                // Flag like 'tls'
                 if (part === 'tls') base.plugin_opts.tls = true;
              }
           }
        }
-       // Add more plugin conditions as needed
     } else if (config.obfs) {
-        // Fallback untuk parameter obfs lama
         base.plugin = "obfs-local";
         base.plugin_opts = {
             mode: config.obfs,
@@ -781,7 +831,6 @@ function toSingBox(config) {
 const templateCache = {};
 
 async function loadTemplateText(format) {
-  // Check cache first
   if (templateCache[format]) {
     return templateCache[format];
   }
@@ -790,7 +839,6 @@ async function loadTemplateText(format) {
     const ext = format === 'clash' ? 'yaml' : 'conf';
     const templatePath = path.join(__dirname, 'templates', `${format}.${ext}`);
     const content = await fs.readFile(templatePath, 'utf8');
-    // Store in cache
     templateCache[format] = content;
     return content;
   } catch (error) {
@@ -842,7 +890,6 @@ async function generateQuantumultConfig(results) {
 
 // Fungsi khusus untuk Sing-Box
 async function generateSingBoxConfig(results) {
-  // 1. Load template
   const templatePath = path.join(__dirname, 'templates', `singbox.json`);
   let template;
   try {
@@ -866,7 +913,7 @@ async function generateSingBoxConfig(results) {
               {
                   type: "selector",
                   tag: "🚀 PROXY",
-                  outbounds: ["direct"] // Akan diisi dengan tag proxy
+                  outbounds: ["direct"]
               },
               {
                   type: "direct",
@@ -880,7 +927,6 @@ async function generateSingBoxConfig(results) {
       };
   }
 
-  // 2. Filter dan parse konfigurasi yang valid
   const validProxies = results
       .filter(r => !r.error)
       .map(r => {
@@ -893,29 +939,22 @@ async function generateSingBoxConfig(results) {
       })
       .filter(p => p !== null);
 
-  // 3. Inject ke template
   if (template.outbounds && Array.isArray(template.outbounds)) {
-      // Cari outbound selector
       const selectorOutbound = template.outbounds.find(ob => ob.type === 'selector');
       if (selectorOutbound) {
-          // Tambahkan tag proxy ke selector
           const proxyTags = validProxies.map(p => p.tag);
-          // Gabungkan dan hilangkan duplikat, pastikan 'direct' tetap ada
           const currentOutbounds = selectorOutbound.outbounds || [];
           const newOutboundsSet = new Set([...currentOutbounds, ...proxyTags]);
           selectorOutbound.outbounds = Array.from(newOutboundsSet);
       } else {
-          // Jika tidak ada selector, buat satu
           template.outbounds.unshift({
               type: "selector",
               tag: "🚀 PROXY",
               outbounds: ["direct", ...validProxies.map(p => p.tag)]
           });
       }
-      // Tambahkan proxy ke akhir daftar outbounds
       template.outbounds.push(...validProxies);
   } else {
-      // Jika tidak ada outbounds, buat struktur baru
       template.outbounds = [
           { type: "selector", tag: "🚀 PROXY", outbounds: ["direct", ...validProxies.map(p => p.tag)] },
           { type: "direct", tag: "direct" },
@@ -929,70 +968,95 @@ async function generateSingBoxConfig(results) {
 
 
 // ================================
-// 🔄 ENDPOINT CONVERT — SINGLE & BATCH (Selalu Gunakan Template & Masukkan Semua Akun)
-// Diperbaiki: Tag dibuat unik dengan suffix, selalu gunakan template
+// 🔄 ENDPOINT CONVERT — SINGLE & BATCH (Deteksi Otomatis Jumlah Akun & Gunakan Template)
+// Diperbaiki: Deteksi otomatis jumlah akun dari parameter 'link', selalu gunakan template, ekstraksi fleksibel
 // ================================
 
 app.get('/convert/:format', async (req, res) => {
   const format = req.params.format.toLowerCase();
-  // Terima kedua parameter untuk fleksibilitas
-  const { link, links } = req.query;
+  const { link } = req.query;
 
-  // 1. Validasi Format
   if (!['clash', 'surge', 'quantumult', 'singbox'].includes(format)) {
     return res.status(400).send(`Error: Format tidak didukung. Gunakan: clash, surge, quantumult, singbox`);
   }
 
-  // 2. Siapkan Array Link (prioritaskan 'links')
-  let linkArray = [];
-  if (links) {
-    linkArray = links.split(',').map(l => l.trim()).filter(l => l.length > 0);
-  } else if (link) {
-    linkArray = [link.trim()];
-  } else {
-    return res.status(400).send(`Error: Parameter 'link' atau 'links' wajib diisi`);
-  }
-
-  if (linkArray.length === 0) {
-     return res.status(400).send(`Error: Tidak ada link valid ditemukan`);
+  if (!link) {
+    return res.status(400).send(`Error: Parameter 'link' wajib diisi`);
   }
 
   try {
-    // 3. Proses Konversi untuk Semua Link
-    // Modifikasi: Buat tag unik dengan suffix
+    // --- 1. Deteksi dan Ekstrak Otomatis Link VPN ---
+    const rawInput = link;
+    const linkStartPattern = /(vless:\/\/|vmess:\/\/|trojan:\/\/|ss:\/\/)/g;
+    let match;
+    const potentialLinkStarts = [];
+
+    while ((match = linkStartPattern.exec(rawInput)) !== null) {
+      potentialLinkStarts.push({ type: match[1], index: match.index });
+    }
+
+    if (potentialLinkStarts.length === 0) {
+       return res.status(400).send(`Error: Tidak ditemukan link VPN yang dikenali dalam input.`);
+    }
+
+    const extractedLinks = [];
+    for (let i = 0; i < potentialLinkStarts.length; i++) {
+      const start = potentialLinkStarts[i].index;
+      const end = i < potentialLinkStarts.length - 1 ? potentialLinkStarts[i + 1].index : rawInput.length;
+      const potentialLink = rawInput.substring(start, end).trim();
+
+      if (potentialLink.length > 20 && (potentialLink.includes('@') || potentialLink.includes('#'))) {
+         extractedLinks.push(potentialLink);
+      } else {
+          console.warn(`Potensi link diabaikan karena tidak lulus validasi awal: ${potentialLink.substring(0, 50)}...`);
+      }
+    }
+
+    if (extractedLinks.length === 0) {
+       return res.status(400).send(`Error: Tidak ada link VPN yang valid ditemukan dalam input.`);
+    }
+
+    // --- 2. Proses Konversi untuk Semua Link yang Terdeteksi ---
     const results = [];
-    for (let i = 0; i < linkArray.length; i++) {
-      const singleLink = linkArray[i];
+    for (let i = 0; i < extractedLinks.length; i++) {
+      const singleLink = extractedLinks[i];
+
+      if (!singleLink.startsWith('vless://') && !singleLink.startsWith('vmess://') &&
+          !singleLink.startsWith('trojan://') && !singleLink.startsWith('ss://')) {
+          console.warn(`Link diabaikan (bukan VPN yang dikenali): ${singleLink.substring(0, 50)}...`);
+          results.push({ error: "Bukan link VPN yang dikenali (vless, vmess, trojan, ss)", link: singleLink });
+          continue;
+      }
+
       try {
         const parsed = parseAnyLink(singleLink);
-        // Gunakan nama tag dari link asli jika tersedia
         const originalName = parsed.name || "Proxy Server";
-        // Tambahkan suffix nomor urut untuk memastikan tag unik
-        const configName = `${originalName}-${i + 1}`; // <-- Prefix nomor urut
+        // Tambahkan suffix nomor urut dan identifier unik
+        const configName = `${originalName}-${i + 1} [vortexVpn]`;
 
-        // Buat objek config dengan semua parameter yang diperlukan
         const config = {
           ...parsed,
-          name: configName, // <-- Gunakan name yang sudah dimodifikasi
+          name: configName,
           network: parsed.network || 'tcp'
         };
 
-        // Generate konfigurasi untuk setiap format
         const formats = {
           clash: toClash(config),
           surge: toSurge(config),
           quantumult: toQuantumult(config),
-          singbox: toSingBox(config) // toSingBox akan menggunakan config.name sebagai tag
+          singbox: toSingBox(config)
         };
         results.push({ original: config, formats, link: singleLink });
       } catch (convertError) {
-        console.error(`Gagal konversi link (${singleLink}):`, convertError.message);
-        // Tetap masukkan ke results agar bisa ditampilkan errornya atau ditangani
+        console.error(`Gagal konversi link (${singleLink.substring(0, 50)}...):`, convertError.message);
         results.push({ error: convertError.message, link: singleLink });
       }
     }
 
-    // 4. Tentukan MIME type berdasarkan format
+    // --- 3. Filter hasil dan tentukan response ---
+    const successfulResults = results.filter(r => !r.hasOwnProperty('error'));
+    const failedResults = results.filter(r => r.hasOwnProperty('error'));
+
     const mimeTypes = {
       clash: 'text/yaml',
       surge: 'text/plain',
@@ -1000,46 +1064,38 @@ app.get('/convert/:format', async (req, res) => {
       singbox: 'application/json'
     };
 
-    // 5. Hasilkan Output Menggunakan Template (seperti endpoint template)
-    // Filter hasil yang berhasil
-    const successfulResults = results.filter(r => !r.hasOwnProperty('error'));
-    
-    // Cek jika ada akun yang berhasil diproses
     if (successfulResults.length > 0) {
-        // --- Selalu Gunakan Template dan Masukkan Semua Akun ---
         let config = '';
         switch (format) {
-          case 'clash': 
-            config = await generateClashConfig(successfulResults); 
+          case 'clash':
+            config = await generateClashConfig(successfulResults);
             break;
-          case 'surge': 
-            config = await generateSurgeConfig(successfulResults); 
+          case 'surge':
+            config = await generateSurgeConfig(successfulResults);
             break;
-          case 'quantumult': 
-            config = await generateQuantumultConfig(successfulResults); 
+          case 'quantumult':
+            config = await generateQuantumultConfig(successfulResults);
             break;
           case 'singbox':
-            // Gunakan logika generateSingBoxConfig yang sudah diperbaiki
             config = await generateSingBoxConfig(successfulResults);
             break;
         }
 
-        // Set Content-Type dan kirimkan konfigurasi lengkap langsung (bukan download)
         res.set('Content-Type', mimeTypes[format]);
-        // HAPUS Content-Disposition agar tidak download
-        // res.set('Content-Disposition', 'attachment; filename="proxies.conf"');
+        // Opsional: Tambahkan header informasi
+        res.set('X-Proxies-Processed', successfulResults.length.toString());
+        if (failedResults.length > 0) {
+            res.set('X-Proxies-Failed', failedResults.length.toString());
+        }
         return res.send(config);
 
     } else {
-        // --- Jika Tidak Ada Akun yang Berhasil ---
-        // Tampilkan pesan error
-        const errorMessages = results.filter(r => r.error).map(r => `Link: ${r.link}\nError: ${r.error}`).join('\n\n');
+        const errorMessages = failedResults.map(r => `Link: ${r.link}\nError: ${r.error}`).join('\n\n');
         res.set('Content-Type', 'text/plain');
         return res.status(400).send(`Semua link gagal dikonversi:\n\n${errorMessages}`);
     }
 
   } catch (error) {
-    // Tangkap error umum
     console.error("Error internal di /convert/:format:", error);
     res.status(500).send(`Error: Terjadi kesalahan internal server saat memproses permintaan.`);
   }
@@ -1047,6 +1103,8 @@ app.get('/convert/:format', async (req, res) => {
 
 // Endpoint untuk konversi batch dengan template lengkap dan DOWNLOAD (tetap ada)
 app.get('/convert/template/:format', async (req, res) => {
+  // ... (logika endpoint ini bisa disesuaikan jika perlu menggunakan ekstraksi fleksibel juga)
+  // Untuk saat ini, kita biarkan seperti sebelumnya untuk kompatibilitas
   const format = req.params.format;
   const { links } = req.query;
 
@@ -1061,13 +1119,12 @@ app.get('/convert/template/:format', async (req, res) => {
 
   try {
     const results = [];
-    // Modifikasi: Buat tag unik dengan suffix (sama seperti endpoint utama)
     for (let i = 0; i < linkArray.length; i++) {
       const link = linkArray[i];
       try {
         const parsed = parseAnyLink(link);
         const originalName = parsed.name || "Proxy Server";
-        const configName = `${originalName}-${i + 1}`;
+        const configName = `${originalName}-${i + 1} [vortexVpn]`;
         const config = {
           ...parsed,
           name: configName,
@@ -1118,8 +1175,9 @@ app.get('/convert/template/:format', async (req, res) => {
   }
 });
 
-// Endpoint POST untuk batch convert (opsional, jika ingin body JSON) - tetap ada
+// Endpoint POST untuk batch convert (opsional) - tetap ada
 app.post('/convert/batch', async (req, res) => {
+  // ... (logika endpoint ini bisa disesuaikan jika perlu menggunakan ekstraksi fleksibel juga)
   const { format, links } = req.body;
   if (!Array.isArray(links) || links.length === 0) {
     return res.status(400).json({ error: "Parameter 'links' harus array dan tidak kosong" });
@@ -1130,13 +1188,12 @@ app.post('/convert/batch', async (req, res) => {
 
   try {
     const results = [];
-    // Modifikasi: Buat tag unik dengan suffix (sama seperti endpoint utama)
     for (let i = 0; i < links.length; i++) {
       const link = links[i];
       try {
         const parsed = parseAnyLink(link);
         const originalName = parsed.name || "Proxy Server";
-        const configName = `${originalName}-${i + 1}`;
+        const configName = `${originalName}-${i + 1} [vortexVpn]`;
         const config = {
           ...parsed,
           name: configName,
@@ -1190,7 +1247,7 @@ app.post('/convert/batch', async (req, res) => {
 app.use('*', (req, res) => {
   res.status(404).json({
     success: false,
-    error: 'Endpoint not found. Use /health?proxy=IP:PORT or /convert/:format?link=... or /convert/:format?links=...',
+    error: 'Endpoint not found. Use /health?proxy=IP:PORT or /convert/:format?link=...',
   });
 });
 
