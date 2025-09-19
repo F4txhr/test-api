@@ -524,7 +524,7 @@ function toClash(config) {
               const parts = config.plugin.split(';');
               for (let i = 1; i < parts.length; i++) {
                  const [k, v] = parts[i].split('=');
-                 if (k) opts[k.trim()] = v ? v.trim() : true;
+                 if (k) opts[decodeURIComponent(k.trim())] = v ? decodeURIComponent(v.trim()) : true;
               }
            }
            if (Object.keys(opts).length > 0) {
@@ -599,11 +599,8 @@ function toSurge(config) {
       return `${config.name} = trojan, ${config.host}, ${config.port}, password=${config.password}, ${trojanOpts}`;
     case 'ss':
       // Format Shadowsocks untuk Surge
-      let ssOpts = `encrypt-method=${config.method}, password=${config.password}`;
       if (config.plugin) {
          // Surge biasanya menggunakan module untuk plugin
-         // Contoh: custom, server, port, cipher, password, module-url
-         // Untuk v2ray-plugin, mungkin perlu module khusus
          // Kita bisa membuat string placeholder atau mencoba memetakan parameter
          // Ini adalah contoh sederhana
          return `${config.name} = custom, ${config.host}, ${config.port}, ${config.method}, ${config.password}, https://raw.githubusercontent.com/ConnersHua/SSEncrypt/master/SSEncrypt.module`;
@@ -667,7 +664,7 @@ function toQuantumult(config) {
 
 function toSingBox(config) {
   let base = {
-    tag: config.name,
+    tag: config.name, // <-- Ini yang penting, menggunakan tag yang sudah dimodifikasi
     type: config.type === 'ss' ? 'shadowsocks' : config.type,
     server: config.host,
     server_port: config.port
@@ -748,11 +745,13 @@ function toSingBox(config) {
              const part = pluginParts[i];
              if (part.includes('=')) {
                 const [k, v] = part.split('=');
-                if (k === 'mode') base.plugin_opts.mode = v;
-                else if (k === 'host') base.plugin_opts.host = v;
-                else if (k === 'path') base.plugin_opts.path = v;
-                else if (k === 'tls') base.plugin_opts.tls = v === 'true';
-                else if (k === 'mux') base.plugin_opts.mux = parseInt(v, 10) || 0;
+                const key = decodeURIComponent(k.trim());
+                const value = v ? decodeURIComponent(v.trim()) : '';
+                if (key === 'mode') base.plugin_opts.mode = value;
+                else if (key === 'host') base.plugin_opts.host = value;
+                else if (key === 'path') base.plugin_opts.path = value;
+                else if (key === 'tls') base.plugin_opts.tls = value === 'true';
+                else if (key === 'mux') base.plugin_opts.mux = parseInt(value, 10) || 0;
              } else {
                 // Flag like 'tls'
                 if (part === 'tls') base.plugin_opts.tls = true;
@@ -800,6 +799,8 @@ async function loadTemplateText(format) {
   }
 }
 
+// --- Fungsi Generate Config dengan Template ---
+
 async function generateClashConfig(results) {
   let template = await loadTemplateText('clash');
   const validProxies = results.filter(r => !r.error);
@@ -839,14 +840,102 @@ async function generateQuantumultConfig(results) {
   return template;
 }
 
+// Fungsi khusus untuk Sing-Box
+async function generateSingBoxConfig(results) {
+  // 1. Load template
+  const templatePath = path.join(__dirname, 'templates', `singbox.json`);
+  let template;
+  try {
+      template = JSON.parse(await fs.readFile(templatePath, 'utf8'));
+  } catch (e) {
+      console.warn(`Template singbox.json tidak ditemukan, menggunakan template default.`);
+      template = {
+          log: { level: "info", timestamp: true },
+          inbounds: [
+              {
+                  type: "tun",
+                  tag: "tun-in",
+                  interface_name: "tun0",
+                  address: "172.19.0.1/30",
+                  auto_route: true,
+                  strict_route: true,
+                  sniff: true
+              }
+          ],
+          outbounds: [
+              {
+                  type: "selector",
+                  tag: "🚀 PROXY",
+                  outbounds: ["direct"] // Akan diisi dengan tag proxy
+              },
+              {
+                  type: "direct",
+                  tag: "direct"
+              },
+              {
+                  type: "block",
+                  tag: "block"
+              }
+          ]
+      };
+  }
+
+  // 2. Filter dan parse konfigurasi yang valid
+  const validProxies = results
+      .filter(r => !r.error)
+      .map(r => {
+          try {
+              return JSON.parse(r.formats.singbox);
+          } catch (e) {
+              console.error("Gagal parse konfigurasi singbox untuk:", r.link, e.message);
+              return null;
+          }
+      })
+      .filter(p => p !== null);
+
+  // 3. Inject ke template
+  if (template.outbounds && Array.isArray(template.outbounds)) {
+      // Cari outbound selector
+      const selectorOutbound = template.outbounds.find(ob => ob.type === 'selector');
+      if (selectorOutbound) {
+          // Tambahkan tag proxy ke selector
+          const proxyTags = validProxies.map(p => p.tag);
+          // Gabungkan dan hilangkan duplikat, pastikan 'direct' tetap ada
+          const currentOutbounds = selectorOutbound.outbounds || [];
+          const newOutboundsSet = new Set([...currentOutbounds, ...proxyTags]);
+          selectorOutbound.outbounds = Array.from(newOutboundsSet);
+      } else {
+          // Jika tidak ada selector, buat satu
+          template.outbounds.unshift({
+              type: "selector",
+              tag: "🚀 PROXY",
+              outbounds: ["direct", ...validProxies.map(p => p.tag)]
+          });
+      }
+      // Tambahkan proxy ke akhir daftar outbounds
+      template.outbounds.push(...validProxies);
+  } else {
+      // Jika tidak ada outbounds, buat struktur baru
+      template.outbounds = [
+          { type: "selector", tag: "🚀 PROXY", outbounds: ["direct", ...validProxies.map(p => p.tag)] },
+          { type: "direct", tag: "direct" },
+          { type: "block", tag: "block" },
+          ...validProxies
+      ];
+  }
+
+  return JSON.stringify(template, null, 2);
+}
+
+
 // ================================
-// 🔄 ENDPOINT CONVERT — SINGLE & BATCH (Tampil Langsung, Bukan Download)
-// Diperbaiki: Tidak membedakan 'link'/'links', output disesuaikan jumlah akun
+// 🔄 ENDPOINT CONVERT — SINGLE & BATCH (Selalu Gunakan Template & Masukkan Semua Akun)
+// Diperbaiki: Tag dibuat unik dengan suffix, selalu gunakan template
 // ================================
 
 app.get('/convert/:format', async (req, res) => {
   const format = req.params.format.toLowerCase();
-  // Terima kedua parameter untuk kompatibilitas, prioritaskan 'links'
+  // Terima kedua parameter untuk fleksibilitas
   const { link, links } = req.query;
 
   // 1. Validasi Format
@@ -857,10 +946,8 @@ app.get('/convert/:format', async (req, res) => {
   // 2. Siapkan Array Link (prioritaskan 'links')
   let linkArray = [];
   if (links) {
-    // Jika 'links' ada, split jadi array
     linkArray = links.split(',').map(l => l.trim()).filter(l => l.length > 0);
   } else if (link) {
-    // Jika hanya 'link' ada, buat array dengan 1 item
     linkArray = [link.trim()];
   } else {
     return res.status(400).send(`Error: Parameter 'link' atau 'links' wajib diisi`);
@@ -872,105 +959,93 @@ app.get('/convert/:format', async (req, res) => {
 
   try {
     // 3. Proses Konversi untuk Semua Link
+    // Modifikasi: Buat tag unik dengan suffix
     const results = [];
-    for (const singleLink of linkArray) {
+    for (let i = 0; i < linkArray.length; i++) {
+      const singleLink = linkArray[i];
       try {
         const parsed = parseAnyLink(singleLink);
         // Gunakan nama tag dari link asli jika tersedia
-        const configName = parsed.name || "Proxy Server";
+        const originalName = parsed.name || "Proxy Server";
+        // Tambahkan suffix nomor urut untuk memastikan tag unik
+        const configName = `${originalName}-${i + 1}`; // <-- Prefix nomor urut
 
         // Buat objek config dengan semua parameter yang diperlukan
         const config = {
           ...parsed,
-          name: configName,
+          name: configName, // <-- Gunakan name yang sudah dimodifikasi
           network: parsed.network || 'tcp'
         };
 
-        let convertedConfig = '';
-        switch (format) {
-          case 'clash': convertedConfig = toClash(config); break;
-          case 'surge': convertedConfig = toSurge(config); break;
-          case 'quantumult': convertedConfig = toQuantumult(config); break;
-          case 'singbox': convertedConfig = toSingBox(config); break;
-          default: throw new Error(`Format tidak dikenali: ${format}`);
-        }
-        results.push({
-            original_link: singleLink,
-            parsed_config: config,
-            converted: convertedConfig
-        });
+        // Generate konfigurasi untuk setiap format
+        const formats = {
+          clash: toClash(config),
+          surge: toSurge(config),
+          quantumult: toQuantumult(config),
+          singbox: toSingBox(config) // toSingBox akan menggunakan config.name sebagai tag
+        };
+        results.push({ original: config, formats, link: singleLink });
       } catch (convertError) {
         console.error(`Gagal konversi link (${singleLink}):`, convertError.message);
-        results.push({
-            original_link: singleLink,
-            error: convertError.message
-        });
+        // Tetap masukkan ke results agar bisa ditampilkan errornya atau ditangani
+        results.push({ error: convertError.message, link: singleLink });
       }
     }
 
     // 4. Tentukan MIME type berdasarkan format
     const mimeTypes = {
-      clash: 'text/yaml', // atau application/yaml
+      clash: 'text/yaml',
       surge: 'text/plain',
       quantumult: 'text/plain',
       singbox: 'application/json'
     };
 
-    // 5. Tentukan Respon Berdasarkan Jumlah Akun dan Hasil
-    const allSuccessful = results.every(r => !r.hasOwnProperty('error'));
+    // 5. Hasilkan Output Menggunakan Template (seperti endpoint template)
+    // Filter hasil yang berhasil
+    const successfulResults = results.filter(r => !r.hasOwnProperty('error'));
+    
+    // Cek jika ada akun yang berhasil diproses
+    if (successfulResults.length > 0) {
+        // --- Selalu Gunakan Template dan Masukkan Semua Akun ---
+        let config = '';
+        switch (format) {
+          case 'clash': 
+            config = await generateClashConfig(successfulResults); 
+            break;
+          case 'surge': 
+            config = await generateSurgeConfig(successfulResults); 
+            break;
+          case 'quantumult': 
+            config = await generateQuantumultConfig(successfulResults); 
+            break;
+          case 'singbox':
+            // Gunakan logika generateSingBoxConfig yang sudah diperbaiki
+            config = await generateSingBoxConfig(successfulResults);
+            break;
+        }
 
-    if (allSuccessful) {
-        
-        // --- Output disesuaikan jumlah akun ---
+        // Set Content-Type dan kirimkan konfigurasi lengkap langsung (bukan download)
         res.set('Content-Type', mimeTypes[format]);
-        
-        if (linkArray.length === 1) {
-            // --- Jika 1 akun ---
-            // Kembalikan konfigurasi tunggal (bukan array)
-            return res.send(results[0].converted);
-            
-        } else {
-            // --- Jika lebih dari 1 akun ---
-            // Kembalikan array/list konfigurasi MENTAH (bukan dari template)
-            if (format === 'singbox') {
-                // Untuk singbox, kembalikan array JSON dari objek konfigurasi
-                const arrayOfConfigs = results.map(r => JSON.parse(r.converted));
-                return res.send(JSON.stringify(arrayOfConfigs, null, 2));
-            } else if (format === 'clash') {
-                // Untuk clash, kembalikan array JSON dari string konfigurasi YAML individu
-                const arrayOfYAMLStrings = results.map(r => r.converted);
-                res.set('Content-Type', 'application/json'); // Ubah ke JSON karena array
-                return res.send(JSON.stringify(arrayOfYAMLStrings, null, 2));
+        // HAPUS Content-Disposition agar tidak download
+        // res.set('Content-Disposition', 'attachment; filename="proxies.conf"');
+        return res.send(config);
 
-            } else {
-                // Untuk surge & quantumult, kembalikan array JSON dari string konfigurasi
-                const arrayOfConfigStrings = results.map(r => r.converted);
-                res.set('Content-Type', 'application/json'); // Ubah ke JSON karena array
-                return res.send(JSON.stringify(arrayOfConfigStrings, null, 2));
-            }
-        }
-        
     } else {
-        // Jika ada yang gagal
-        if (linkArray.length === 1) {
-             // Untuk single, tampilkan error sederhana
-             res.set('Content-Type', 'text/plain');
-             return res.status(400).send(`Gagal konversi link: ${results[0].error}`);
-        } else {
-             // Untuk multiple, tampilkan error dalam format teks
-             const errorMessages = results.filter(r => r.error).map(r => `Link: ${r.original_link}\nError: ${r.error}`).join('\n\n');
-             res.set('Content-Type', 'text/plain');
-             return res.status(400).send(`Beberapa link gagal dikonversi:\n\n${errorMessages}`);
-        }
+        // --- Jika Tidak Ada Akun yang Berhasil ---
+        // Tampilkan pesan error
+        const errorMessages = results.filter(r => r.error).map(r => `Link: ${r.link}\nError: ${r.error}`).join('\n\n');
+        res.set('Content-Type', 'text/plain');
+        return res.status(400).send(`Semua link gagal dikonversi:\n\n${errorMessages}`);
     }
 
   } catch (error) {
+    // Tangkap error umum
     console.error("Error internal di /convert/:format:", error);
     res.status(500).send(`Error: Terjadi kesalahan internal server saat memproses permintaan.`);
   }
 });
-  
-// Endpoint untuk konversi batch dengan template lengkap dan DOWNLOAD
+
+// Endpoint untuk konversi batch dengan template lengkap dan DOWNLOAD (tetap ada)
 app.get('/convert/template/:format', async (req, res) => {
   const format = req.params.format;
   const { links } = req.query;
@@ -986,11 +1061,13 @@ app.get('/convert/template/:format', async (req, res) => {
 
   try {
     const results = [];
-    for (const link of linkArray) {
+    // Modifikasi: Buat tag unik dengan suffix (sama seperti endpoint utama)
+    for (let i = 0; i < linkArray.length; i++) {
+      const link = linkArray[i];
       try {
         const parsed = parseAnyLink(link);
-        // Gunakan nama tag dari link asli jika tersedia
-        const configName = parsed.name || "Proxy Server";
+        const originalName = parsed.name || "Proxy Server";
+        const configName = `${originalName}-${i + 1}`;
         const config = {
           ...parsed,
           name: configName,
@@ -1014,18 +1091,7 @@ app.get('/convert/template/:format', async (req, res) => {
       case 'surge': config = await generateSurgeConfig(results); break;
       case 'quantumult': config = await generateQuantumultConfig(results); break;
       case 'singbox':
-        // Special handling for singbox full config
-        const templatePath = path.join(__dirname, 'templates', `singbox.json`);
-        let template;
-        try {
-            template = JSON.parse(await fs.readFile(templatePath, 'utf8'));
-        } catch (e) {
-            template = { outbounds: [{ tag: "proxy", type: "selector", outbounds: [] }] }; // Default template
-        }
-        const validProxies = results.filter(r => !r.error).map(r => JSON.parse(r.formats.singbox));
-        template.outbounds[0].outbounds.push(...validProxies.map(p => p.tag));
-        template.outbounds.push(...validProxies);
-        config = JSON.stringify(template, null, 2);
+        config = await generateSingBoxConfig(results);
         break;
     }
 
@@ -1052,7 +1118,7 @@ app.get('/convert/template/:format', async (req, res) => {
   }
 });
 
-// Endpoint POST untuk batch convert (opsional, jika ingin body JSON)
+// Endpoint POST untuk batch convert (opsional, jika ingin body JSON) - tetap ada
 app.post('/convert/batch', async (req, res) => {
   const { format, links } = req.body;
   if (!Array.isArray(links) || links.length === 0) {
@@ -1064,11 +1130,13 @@ app.post('/convert/batch', async (req, res) => {
 
   try {
     const results = [];
-    for (const link of links) {
+    // Modifikasi: Buat tag unik dengan suffix (sama seperti endpoint utama)
+    for (let i = 0; i < links.length; i++) {
+      const link = links[i];
       try {
         const parsed = parseAnyLink(link);
-        // Gunakan nama tag dari link asli jika tersedia
-        const configName = parsed.name || "Proxy Server";
+        const originalName = parsed.name || "Proxy Server";
+        const configName = `${originalName}-${i + 1}`;
         const config = {
           ...parsed,
           name: configName,
@@ -1092,17 +1160,7 @@ app.post('/convert/batch', async (req, res) => {
       case 'surge': config = await generateSurgeConfig(results); break;
       case 'quantumult': config = await generateQuantumultConfig(results); break;
       case 'singbox':
-        const templatePath = path.join(__dirname, 'templates', `singbox.json`);
-        let template;
-        try {
-            template = JSON.parse(await fs.readFile(templatePath, 'utf8'));
-        } catch (e) {
-            template = { outbounds: [{ tag: "proxy", type: "selector", outbounds: [] }] };
-        }
-        const validProxies = results.filter(r => !r.error).map(r => JSON.parse(r.formats.singbox));
-        template.outbounds[0].outbounds.push(...validProxies.map(p => p.tag));
-        template.outbounds.push(...validProxies);
-        config = JSON.stringify(template, null, 2);
+        config = await generateSingBoxConfig(results);
         break;
     }
 
