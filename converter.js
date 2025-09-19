@@ -507,12 +507,7 @@ function toSurge(config) {
       }
       return `${config.name} = trojan, ${config.host}, ${config.port}, password=${config.password}, ${trojanOpts}`;
     case 'ss':
-      // Format Shadowsocks untuk Surge
       if (config.plugin) {
-         // Surge biasanya menggunakan module untuk plugin
-         // Contoh: custom, server, port, cipher, password, module-url
-         // Kita bisa membuat string placeholder atau mencoba memetakan parameter
-         // Ini adalah contoh sederhana
          return `${config.name} = custom, ${config.host}, ${config.port}, ${config.method}, ${config.password}, https://raw.githubusercontent.com/ConnersHua/SSEncrypt/master/SSEncrypt.module`;
       } else {
          return `${config.name} = ss, ${config.host}, ${config.port}, ${config.method}, ${config.password}`;
@@ -563,7 +558,7 @@ function toQuantumult(config) {
       }
       return `trojan=${config.host}:${config.port}, password=${config.password}, ${trojanParams}, tag=${config.name}`;
     case 'ss':
-      let ssParams = `encrypt-method=${config.method}`;
+      let ssParams = `encrypt-method=${config.method}, password=${config.password}`;
       if (config.obfs) ssParams += `, obfs=${config.obfs}, obfs-host=${config.obfsHost}`;
       return `shadowsocks=${config.host}:${config.port}, method=${config.method}, password=${config.password}, ${ssParams}, tag=${config.name}`;
     default:
@@ -571,9 +566,8 @@ function toQuantumult(config) {
   }
 }
 
-// --- Fungsi toSingBox dengan Log Debugging ---
+// --- Fungsi toSingBox dengan Log Debugging (TERUTAMA PLUGIN SS) ---
 function toSingBox(config) {
-  // ... (kode toSingBox tetap sama)
   // --- Tambahkan log ini untuk debugging ---
   console.log("--- DEBUG: Memulai toSingBox untuk config ---");
   console.log("DEBUG: config.type:", config.type);
@@ -594,17 +588,26 @@ function toSingBox(config) {
   if (config.type === 'vless' || config.type === 'vmess') {
     base.uuid = config.uuid;
     if (config.type === 'vmess') base.alter_id = config.alterId;
-    // Use network type for transport
+    // --- Tambahkan log ini ---
+    console.log("DEBUG: Memeriksa network untuk vless/vmess:", config.network);
     if (config.network === 'ws') {
+      console.log("DEBUG: Membuat transport WS untuk vless/vmess");
       base.transport = {
         type: 'ws',
         path: config.path || '/',
         headers: config.host_header ? { host: config.host_header } : {}
       };
+      console.log("DEBUG: Transport WS dibuat:", JSON.stringify(base.transport, null, 2));
     }
-    // Add other transport types if needed (grpc, http, etc.)
+    // --- Akhir log debugging ---
 
-    // TLS Configuration
+    if (config.network === 'grpc') {
+       base.transport = {
+         type: 'grpc',
+         service_name: config.serviceName || ''
+       };
+    }
+
     if (config.security === 'tls' || config.security === 'reality' || config.tls) {
       base.tls = {
         enabled: true,
@@ -631,15 +634,19 @@ function toSingBox(config) {
 
   } else if (config.type === 'trojan') {
     base.password = config.password;
-    // Transport
+    // --- Tambahkan log ini ---
+    console.log("DEBUG: Memeriksa network untuk trojan:", config.network);
     if (config.network === 'ws') {
+      console.log("DEBUG: Membuat transport WS untuk trojan");
       base.transport = {
         type: 'ws',
         path: config.path || '/',
         headers: config.host_header ? { host: config.host_header } : {}
       };
+      console.log("DEBUG: Transport WS dibuat:", JSON.stringify(base.transport, null, 2));
     }
-    // TLS for Trojan (usually implied)
+    // --- Akhir log debugging ---
+
     base.tls = {
       enabled: true,
       server_name: config.sni || config.host,
@@ -649,45 +656,72 @@ function toSingBox(config) {
     if (config.alpn) {
        base.tls.alpn = config.alpn.split(',').map(a => a.trim()).filter(a => a);
     }
-    // Add other TLS params if needed
 
   } else if (config.type === 'ss') {
     base.method = config.method;
     base.password = config.password;
-    // Plugin handling for sing-box
+
+    // --- Perbaikan dan Log Debugging untuk Plugin SS ---
+    console.log("DEBUG (SS Plugin): Memeriksa config.plugin:", JSON.stringify(config.plugin));
+      
     if (config.plugin) {
-       // Parse plugin string like: v2ray-plugin;tls;mode=websocket;host=...;path=...
+       console.log("DEBUG (SS Plugin): Plugin string ditemukan, mulai parsing...");
+       
        const pluginParts = config.plugin.split(';');
+       console.log("DEBUG (SS Plugin): pluginParts setelah split(';'):", JSON.stringify(pluginParts));
+       
        const pluginName = pluginParts[0];
+       console.log("DEBUG (SS Plugin): pluginName:", pluginName);
+       
        if (pluginName.includes('v2ray-plugin') || pluginName.includes('obfs')) {
           base.plugin = pluginName.includes('v2ray-plugin') ? "v2ray-plugin" : "obfs-local";
           base.plugin_opts = {};
+          console.log("DEBUG (SS Plugin): Plugin name dikenali, inisialisasi plugin_opts: {}");
+          
           for (let i = 1; i < pluginParts.length; i++) {
              const part = pluginParts[i];
+             console.log(`DEBUG (SS Plugin): Memproses bagian plugin [${i}]:`, part);
+             
              if (part.includes('=')) {
                 const [k, v] = part.split('=');
-                const key = decodeURIComponent(k.trim());
-                const value = v ? decodeURIComponent(v.trim()) : '';
-                if (key === 'mode') base.plugin_opts.mode = value;
-                else if (key === 'host') base.plugin_opts.host = value;
-                else if (key === 'path') base.plugin_opts.path = value;
-                else if (key === 'tls') base.plugin_opts.tls = value === 'true';
-                else if (key === 'mux') base.plugin_opts.mux = parseInt(value, 10) || 0;
+                console.log(`DEBUG (SS Plugin): Bagian dengan '=' ditemukan. k='${k}', v='${v}'`);
+                
+                try {
+                   const key = decodeURIComponent(k.trim());
+                   const value = v ? decodeURIComponent(v.trim()) : '';
+                   console.log(`DEBUG (SS Plugin): Setelah decodeURIComponent. key='${key}', value='${value}'`);
+                   
+                   if (key === 'mode') base.plugin_opts.mode = value;
+                   else if (key === 'host') base.plugin_opts.host = value;
+                   else if (key === 'path') base.plugin_opts.path = value;
+                   else if (key === 'tls') base.plugin_opts.tls = value === 'true';
+                   else if (key === 'mux') base.plugin_opts.mux = parseInt(value, 10) || 0;
+                   else {
+                       console.log(`DEBUG (SS Plugin): Key '${key}' tidak dikenali, dilewati.`);
+                   }
+                   console.log("DEBUG (SS Plugin): plugin_opts saat ini:", JSON.stringify(base.plugin_opts));
+                } catch (decodeErr) {
+                   console.error("DEBUG (SS Plugin): Gagal decodeURIComponent pada bagian:", part, decodeErr.message);
+                }
              } else {
-                // Flag like 'tls'
-                if (part === 'tls') base.plugin_opts.tls = true;
+                console.log(`DEBUG (SS Plugin): Bagian flag ditemukan:`, part);
+                if (part === 'tls') {
+                    base.plugin_opts.tls = true;
+                    console.log("DEBUG (SS Plugin): Flag 'tls' ditemukan, set plugin_opts.tls = true");
+                } else {
+                    console.log(`DEBUG (SS Plugin): Flag '${part}' tidak dikenali, dilewati.`);
+                }
              }
           }
+          console.log("DEBUG (SS Plugin): Plugin dan plugin_opts akhir:", JSON.stringify({ plugin: base.plugin, plugin_opts: base.plugin_opts }, null, 2));
+       } else {
+           console.log("DEBUG (SS Plugin): Plugin name tidak dikenali:", pluginName);
        }
-       // Add more plugin conditions as needed
-    } else if (config.obfs) {
-        // Fallback untuk parameter obfs lama
-        base.plugin = "obfs-local";
-        base.plugin_opts = {
-            mode: config.obfs,
-            host: config.obfsHost || config.host
-        };
+    } else {
+        console.log("DEBUG (SS Plugin): Tidak ada plugin string yang ditemukan di config.plugin");
     }
+    // --- Akhir Perbaikan dan Log Debugging untuk Plugin SS ---
+
   }
 
   const result = JSON.stringify(base, null, 2);
@@ -706,7 +740,6 @@ function toSingBox(config) {
 const templateCache = {};
 
 async function loadTemplateText(format) {
-  // Check cache first
   if (templateCache[format]) {
     return templateCache[format];
   }
@@ -715,7 +748,6 @@ async function loadTemplateText(format) {
     const ext = format === 'clash' ? 'yaml' : 'conf';
     const templatePath = path.join(__dirname, 'templates', `${format}.${ext}`);
     const content = await fs.readFile(templatePath, 'utf8');
-    // Store in cache
     templateCache[format] = content;
     return content;
   } catch (error) {
@@ -846,6 +878,7 @@ async function generateSingBoxConfig(results) {
 
 // ================================
 // 🔄 ENDPOINT CONVERT HANDLERS — GET & POST
+// (Bagian ini tetap SAMA seperti sebelumnya)
 // ================================
 
 // --- Handler untuk GET /convert/:format ---
