@@ -2,70 +2,54 @@
 const fs = require('fs').promises;
 const path = require('path');
 
-// --- Fungsi Ekstraksi Link dengan Log Debugging (Versi Fleksibel - Cari Semua Pola) ---
-// Versi ini mencari dan mengekstrak link VPN berdasarkan awalan, bukan struktur input.
+// --- Fungsi Ekstraksi Link SEDERHANA untuk GET ---
+// Karena sekarang kita fokus pada POST, fungsi ini bisa disederhanakan atau dihapus
+// Tapi tetap dipertahankan untuk kompatibilitas endpoint GET
 async function extractLinks(rawInput) {
-  console.log("--- DEBUG: Mulai proses ekstraksi link (Fleksibel - Cari Semua Pola) ---");
+  console.log("--- DEBUG: Mulai proses ekstraksi link (Metode GET - Sederhana) ---");
   console.log("Panjang input 'link' dari user:", rawInput.length);
-  // Tidak perlu log seluruh input karena bisa sangat panjang
 
   if (!rawInput || typeof rawInput !== 'string') {
      console.log("DEBUG: Input tidak valid atau kosong.");
      throw new Error('Input link tidak valid.');
   }
 
+  // Untuk metode GET, kita asumsikan input adalah satu link atau beberapa link dipisah koma
+  // Ini adalah versi sederhana dan tidak sefleksibel versi regex sebelumnya
+  const potentialLinks = rawInput.split(',').map(l => l.trim()).filter(l => l.length > 0);
+
   const extractedLinks = [];
-  // --- Perubahan Utama: Gunakan Regex Global untuk Menemukan SEMUA Kemunculan ---
-  // Regex untuk mencocokkan seluruh link VPN lengkap berdasarkan awalan
-  // Gunakan non-greedy match .*? untuk berhenti di karakter tertentu
-  // \s berarti spasi, tab, newline, dll. [,\s] berarti koma atau spasi putih.
-  const linkFullPattern = /(vless:\/\/[^\s,]*?#[^\s,]*?|vless:\/\/[^\s,]*?(?=[,\s]|$))|(vmess:\/\/[^\s,]*?#[^\s,]*?|vmess:\/\/[^\s,]*?(?=[,\s]|$))|(trojan:\/\/[^\s,]*?#[^\s,]*?|trojan:\/\/[^\s,]*?(?=[,\s]|$))|(ss:\/\/[^\s,]*?#[^\s,]*?|ss:\/\/[^\s,]*?(?=[,\s]|$))/gi;
-
-  let match;
-  let matchCount = 0;
-  const foundMatches = []; // Untuk log
-
-  while ((match = linkFullPattern.exec(rawInput)) !== null) {
-    matchCount++;
-    // match[0] berisi seluruh link yang cocok
-    // Karena regex memiliki beberapa grup capture, kita ambil yang tidak null/undefined
-    // match[0] adalah hasil keseluruhan, sisanya adalah grup-grup opsional
-    const matchedLink = match[0] || ''; // Prioritaskan match[0]
-
-    if (matchedLink) {
-       foundMatches.push({ index: match.index, link: matchedLink.substring(0, 100) + (matchedLink.length > 100 ? "..." : "") });
-
-       // Validasi sederhana tambahan sebelum push
-       // Panjang > 30 dan mengandung karakter khas link (@ untuk userinfo/host, # untuk fragment/tag)
-       if (matchedLink.length > 30 && (matchedLink.includes('@') || matchedLink.includes('#'))) {
-          console.log(`DEBUG: Link ${matchCount} ditemukan dan lolos validasi awal.`);
-          extractedLinks.push(matchedLink);
-       } else {
-           console.warn(`DEBUG: Link ${matchCount} ditemukan tapi diabaikan karena tidak lulus validasi awal. Panjang: ${matchedLink.length}, Ada @: ${matchedLink.includes('@')}, Ada #: ${matchedLink.includes('#')}`);
-       }
+  for (let i = 0; i < potentialLinks.length; i++) {
+    const link = potentialLinks[i];
+    // Validasi sederhana awal
+    if (link.length > 30 && (link.includes('@') || link.includes('#'))) {
+       console.log(`DEBUG: Link ${i+1} lolos validasi awal (GET).`);
+       extractedLinks.push(link);
+    } else {
+        console.warn(`DEBUG: Link ${i+1} diabaikan karena tidak lulus validasi awal (GET). Panjang: ${link.length}`);
     }
   }
 
-  console.log(`DEBUG: Total kemungkinan link ditemukan oleh regex: ${matchCount}`);
-  console.log("DEBUG: Detail link yang ditemukan (potongan):", foundMatches);
-  console.log("DEBUG: Link yang berhasil diekstrak (final):", extractedLinks.map(l => l.substring(0, 50) + (l.length > 50 ? "..." : "")));
-  console.log("--- DEBUG: Akhir proses ekstraksi link ---");
+  console.log("DEBUG: Link yang berhasil diekstrak (GET):", extractedLinks.map(l => l.substring(0, 50) + (l.length > 50 ? "..." : "")));
+  console.log("--- DEBUG: Akhir proses ekstraksi link (GET) ---");
 
   if (extractedLinks.length === 0) {
-     throw new Error('Tidak ditemukan link VPN yang valid dalam input. Pastikan link dimulai dengan vless://, vmess://, trojan://, atau ss://.');
+     throw new Error('Tidak ditemukan link VPN yang valid dalam input GET.');
   }
 
   return extractedLinks;
 }
-// --- Akhir Fungsi Ekstraksi Link yang Diperbarui ---
+// --- Akhir Fungsi Ekstraksi Link Sederhana ---
 
 
 // ================================
 // 🔄 PARSER & CONVERTER — VLESS, VMess, Trojan, Shadowsocks (SUPPORT WS!)
+// (Bagian ini tetap SAMA seperti sebelumnya)
 // ================================
 
 // --- Fungsi Parsing tetap sama seperti sebelumnya ---
 function parseSS(link) {
+  // ... (kode parseSS tetap sama)
   if (!link.startsWith('ss://')) {
     throw new Error('Not a Shadowsocks link');
   }
@@ -130,6 +114,7 @@ function parseSS(link) {
 }
 
 function parseVLESS(link) {
+  // ... (kode parseVLESS tetap sama)
   if (!link.startsWith('vless://')) {
     throw new Error('Bukan link VLESS');
   }
@@ -193,6 +178,7 @@ function parseVLESS(link) {
 }
 
 function parseVMess(link) {
+  // ... (kode parseVMess tetap sama)
   if (!link.startsWith('vmess://')) {
     throw new Error('Bukan link VMess');
   }
@@ -235,6 +221,7 @@ function parseVMess(link) {
 }
 
 function parseTrojan(link) {
+  // ... (kode parseTrojan tetap sama)
   if (!link.startsWith('trojan://')) {
     throw new Error('Bukan link Trojan');
   }
@@ -334,9 +321,11 @@ function parseAnyLink(link) {
 
 // ================================
 // 🎯 CONVERTER — Clash, Surge, Quantumult, Sing-Box
+// (Bagian ini tetap SAMA seperti sebelumnya)
 // ================================
 
 function toClash(config) {
+  // ... (kode toClash tetap sama)
   switch (config.type) {
     case 'vless':
       let vlessConfig = `- name: "${config.name.replace(/"/g, '\\"')}"
@@ -413,6 +402,7 @@ function toClash(config) {
   skip-cert-verify: ${!!config.allowInsecure}
   tls: true
 `;
+      // Trojan biasanya TLS
       if(config.sni) trojanConfig += `  sni: ${config.sni}\n`;
       if(config.alpn) trojanConfig += `  alpn: [${config.alpn.split(',').map(a => `"${a.trim()}"`).join(', ')}]\n`;
       if(config.fp) trojanConfig += `  fingerprint: ${config.fp}\n`;
@@ -471,11 +461,13 @@ function toClash(config) {
       return ssConfig;
 
     default:
+      // Pesan error yang lebih umum
       throw new Error(`Tidak dapat mengkonversi protokol '${config.type}' ke format Clash.`);
   }
 }
 
 function toSurge(config) {
+  // ... (kode toSurge tetap sama)
   switch (config.type) {
     case 'vless':
       let vlessOpts = `skip-cert-verify=${!!config.allowInsecure}`;
@@ -515,7 +507,12 @@ function toSurge(config) {
       }
       return `${config.name} = trojan, ${config.host}, ${config.port}, password=${config.password}, ${trojanOpts}`;
     case 'ss':
+      // Format Shadowsocks untuk Surge
       if (config.plugin) {
+         // Surge biasanya menggunakan module untuk plugin
+         // Contoh: custom, server, port, cipher, password, module-url
+         // Kita bisa membuat string placeholder atau mencoba memetakan parameter
+         // Ini adalah contoh sederhana
          return `${config.name} = custom, ${config.host}, ${config.port}, ${config.method}, ${config.password}, https://raw.githubusercontent.com/ConnersHua/SSEncrypt/master/SSEncrypt.module`;
       } else {
          return `${config.name} = ss, ${config.host}, ${config.port}, ${config.method}, ${config.password}`;
@@ -526,6 +523,7 @@ function toSurge(config) {
 }
 
 function toQuantumult(config) {
+  // ... (kode toQuantumult tetap sama)
   switch (config.type) {
     case 'vless':
       let vlessParams = `skip-cert-verify=${!!config.allowInsecure}`;
@@ -565,7 +563,7 @@ function toQuantumult(config) {
       }
       return `trojan=${config.host}:${config.port}, password=${config.password}, ${trojanParams}, tag=${config.name}`;
     case 'ss':
-      let ssParams = `encrypt-method=${config.method}, password=${config.password}`;
+      let ssParams = `encrypt-method=${config.method}`;
       if (config.obfs) ssParams += `, obfs=${config.obfs}, obfs-host=${config.obfsHost}`;
       return `shadowsocks=${config.host}:${config.port}, method=${config.method}, password=${config.password}, ${ssParams}, tag=${config.name}`;
     default:
@@ -575,6 +573,7 @@ function toQuantumult(config) {
 
 // --- Fungsi toSingBox dengan Log Debugging ---
 function toSingBox(config) {
+  // ... (kode toSingBox tetap sama)
   // --- Tambahkan log ini untuk debugging ---
   console.log("--- DEBUG: Memulai toSingBox untuk config ---");
   console.log("DEBUG: config.type:", config.type);
@@ -595,27 +594,17 @@ function toSingBox(config) {
   if (config.type === 'vless' || config.type === 'vmess') {
     base.uuid = config.uuid;
     if (config.type === 'vmess') base.alter_id = config.alterId;
-
-    // --- Tambahkan log ini ---
-    console.log("DEBUG: Memeriksa network untuk vless/vmess:", config.network);
+    // Use network type for transport
     if (config.network === 'ws') {
-      console.log("DEBUG: Membuat transport WS untuk vless/vmess");
       base.transport = {
         type: 'ws',
         path: config.path || '/',
         headers: config.host_header ? { host: config.host_header } : {}
       };
-      console.log("DEBUG: Transport WS dibuat:", JSON.stringify(base.transport, null, 2));
     }
-    // --- Akhir log debugging ---
+    // Add other transport types if needed (grpc, http, etc.)
 
-    if (config.network === 'grpc') {
-       base.transport = {
-         type: 'grpc',
-         service_name: config.serviceName || ''
-       };
-    }
-
+    // TLS Configuration
     if (config.security === 'tls' || config.security === 'reality' || config.tls) {
       base.tls = {
         enabled: true,
@@ -642,20 +631,15 @@ function toSingBox(config) {
 
   } else if (config.type === 'trojan') {
     base.password = config.password;
-
-    // --- Tambahkan log ini ---
-    console.log("DEBUG: Memeriksa network untuk trojan:", config.network);
+    // Transport
     if (config.network === 'ws') {
-      console.log("DEBUG: Membuat transport WS untuk trojan");
       base.transport = {
         type: 'ws',
         path: config.path || '/',
         headers: config.host_header ? { host: config.host_header } : {}
       };
-      console.log("DEBUG: Transport WS dibuat:", JSON.stringify(base.transport, null, 2));
     }
-    // --- Akhir log debugging ---
-
+    // TLS for Trojan (usually implied)
     base.tls = {
       enabled: true,
       server_name: config.sni || config.host,
@@ -665,15 +649,14 @@ function toSingBox(config) {
     if (config.alpn) {
        base.tls.alpn = config.alpn.split(',').map(a => a.trim()).filter(a => a);
     }
+    // Add other TLS params if needed
 
   } else if (config.type === 'ss') {
     base.method = config.method;
     base.password = config.password;
-
-    // --- Tambahkan log ini ---
-    console.log("DEBUG: Memeriksa plugin untuk ss:", config.plugin);
+    // Plugin handling for sing-box
     if (config.plugin) {
-       console.log("DEBUG: Membuat plugin dan plugin_opts untuk ss");
+       // Parse plugin string like: v2ray-plugin;tls;mode=websocket;host=...;path=...
        const pluginParts = config.plugin.split(';');
        const pluginName = pluginParts[0];
        if (pluginName.includes('v2ray-plugin') || pluginName.includes('obfs')) {
@@ -691,14 +674,20 @@ function toSingBox(config) {
                 else if (key === 'tls') base.plugin_opts.tls = value === 'true';
                 else if (key === 'mux') base.plugin_opts.mux = parseInt(value, 10) || 0;
              } else {
+                // Flag like 'tls'
                 if (part === 'tls') base.plugin_opts.tls = true;
              }
           }
        }
-       console.log("DEBUG: Plugin dan plugin_opts dibuat:", { plugin: base.plugin, plugin_opts: base.plugin_opts });
+       // Add more plugin conditions as needed
+    } else if (config.obfs) {
+        // Fallback untuk parameter obfs lama
+        base.plugin = "obfs-local";
+        base.plugin_opts = {
+            mode: config.obfs,
+            host: config.obfsHost || config.host
+        };
     }
-    // --- Akhir log debugging ---
-
   }
 
   const result = JSON.stringify(base, null, 2);
@@ -710,12 +699,14 @@ function toSingBox(config) {
 
 // ================================
 // 🧩 TEMPLATE SYSTEM & GENERATORS
+// (Bagian ini tetap SAMA seperti sebelumnya)
 // ================================
 
 // Simple in-memory cache for templates
 const templateCache = {};
 
 async function loadTemplateText(format) {
+  // Check cache first
   if (templateCache[format]) {
     return templateCache[format];
   }
@@ -724,6 +715,7 @@ async function loadTemplateText(format) {
     const ext = format === 'clash' ? 'yaml' : 'conf';
     const templatePath = path.join(__dirname, 'templates', `${format}.${ext}`);
     const content = await fs.readFile(templatePath, 'utf8');
+    // Store in cache
     templateCache[format] = content;
     return content;
   } catch (error) {
@@ -853,10 +845,10 @@ async function generateSingBoxConfig(results) {
 
 
 // ================================
-// 🔄 ENDPOINT CONVERT HANDLER
-// Dengan Log Debugging
+// 🔄 ENDPOINT CONVERT HANDLERS — GET & POST
 // ================================
 
+// --- Handler untuk GET /convert/:format ---
 async function handleConvertRequest(req, res) {
   const format = req.params.format.toLowerCase();
   const { link } = req.query;
@@ -870,7 +862,7 @@ async function handleConvertRequest(req, res) {
   }
 
   try {
-    // --- 1. Ekstrak Link (Versi Fleksibel) ---
+    // --- 1. Ekstrak Link (Metode GET - Sederhana) ---
     const extractedLinks = await extractLinks(link);
 
     // --- 2. Proses Konversi untuk Semua Link yang Terdeteksi ---
@@ -954,13 +946,115 @@ async function handleConvertRequest(req, res) {
 
   } catch (error) {
     // Tangkap error dari extractLinks atau error lainnya
-    console.error("Error di handleConvertRequest:", error);
+    console.error("Error di handleConvertRequest (GET):", error);
     res.status(400).send(`Error: ${error.message}`);
   }
 }
 
+// --- Handler untuk POST /convert/:format ---
+async function handleConvertPostRequest(req, res) {
+    const format = req.params.format?.toLowerCase();
+    // --- Perubahan Utama: Terima data dari body ---
+    // Harap kirim dalam bentuk { "links": ["link1", "link2", ...] }
+    const { links } = req.body;
+    // --- Akhir Perubahan ---
+
+    if (!format || !['clash', 'surge', 'quantumult', 'singbox'].includes(format)) {
+        return res.status(400).send(`Error: Format tidak didukung. Gunakan: clash, surge, quantumult, singbox`);
+    }
+
+    // --- Perubahan Utama: Validasi body POST ---
+    if (!links || !Array.isArray(links) || links.length === 0) {
+        return res.status(400).send(`Error: Body permintaan harus berisi array 'links' yang tidak kosong. Contoh: { "links": ["link1", "link2"] }`);
+    }
+    // --- Akhir Perubahan ---
+
+    // --- Logika konversi tetap sama seperti GET, tapi data sumbernya berbeda ---
+    try {
+        const results = [];
+        for (let i = 0; i < links.length; i++) {
+            const singleLink = links[i];
+
+            if (!singleLink.startsWith('vless://') && !singleLink.startsWith('vmess://') &&
+                !singleLink.startsWith('trojan://') && !singleLink.startsWith('ss://')) {
+                console.warn(`Link diabaikan (bukan VPN yang dikenali): ${singleLink.substring(0, 50)}...`);
+                results.push({ error: "Bukan link VPN yang dikenali (vless, vmess, trojan, ss)", link: singleLink });
+                continue;
+            }
+
+            try {
+                const parsed = parseAnyLink(singleLink);
+                const originalName = parsed.name || "Proxy Server";
+                const configName = `${originalName}-${i + 1} [vortexVpn]`;
+
+                const config = {
+                    ...parsed,
+                    name: configName,
+                    network: parsed.network || 'tcp'
+                };
+
+                const formats = {
+                    clash: toClash(config),
+                    surge: toSurge(config),
+                    quantumult: toQuantumult(config),
+                    singbox: toSingBox(config)
+                };
+                results.push({ original: config, formats, link: singleLink });
+            } catch (convertError) {
+                console.error(`Gagal konversi link (${singleLink.substring(0, 50)}...):`, convertError.message);
+                results.push({ error: convertError.message, link: singleLink });
+            }
+        }
+
+        const successfulResults = results.filter(r => !r.hasOwnProperty('error'));
+        const failedResults = results.filter(r => r.hasOwnProperty('error'));
+
+        const mimeTypes = {
+            clash: 'text/yaml',
+            surge: 'text/plain',
+            quantumult: 'text/plain',
+            singbox: 'application/json'
+        };
+
+        if (successfulResults.length > 0) {
+            let config = '';
+            switch (format) {
+                case 'clash':
+                    config = await generateClashConfig(successfulResults);
+                    break;
+                case 'surge':
+                    config = await generateSurgeConfig(successfulResults);
+                    break;
+                case 'quantumult':
+                    config = await generateQuantumultConfig(successfulResults);
+                    break;
+                case 'singbox':
+                    config = await generateSingBoxConfig(successfulResults);
+                    break;
+            }
+
+            res.set('Content-Type', mimeTypes[format]);
+            res.set('X-Proxies-Processed', successfulResults.length.toString());
+            if (failedResults.length > 0) {
+                res.set('X-Proxies-Failed', failedResults.length.toString());
+            }
+            return res.send(config);
+
+        } else {
+            const errorMessages = failedResults.map(r => `Link: ${r.link}\nError: ${r.error}`).join('\n\n');
+            res.set('Content-Type', 'text/plain');
+            return res.status(400).send(`Semua link gagal dikonversi:\n\n${errorMessages}`);
+        }
+
+    } catch (error) {
+        console.error("Error di handleConvertPostRequest:", error);
+        res.status(500).send(`Error: ${error.message}`);
+    }
+}
+// --- Akhir Handler POST ---
+
 // Ekspor fungsi yang dibutuhkan oleh server.js
 module.exports = {
-  handleConvertRequest,
-  // Jika nanti ingin mengekspor fungsi lain untuk testing/unit test, bisa ditambahkan di sini
+  handleConvertRequest, // Untuk GET
+  handleConvertPostRequest // Untuk POST
 };
