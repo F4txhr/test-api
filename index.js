@@ -31,7 +31,7 @@ const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
 async function sendTelegramAlert(message) {
-  if (!TELEGRAM_BOT_TOKEN || !TELELEGRAM_CHAT_ID) {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
     console.warn("⚠️ Telegram alert disabled — token or chat_id not set");
     return;
   }
@@ -216,7 +216,7 @@ function parseSS(link) {
   const [userinfo, hostport] = clean.split('@');
   const [host, portWithParams] = hostport.split(':');
   const [portPart, ...paramParts] = portWithParams.split('?');
-  const port = parseInt(portPart);
+  const port = parseInt(portPart, 10);
 
   let method = 'chacha20-ietf-poly1305';
   let password = '';
@@ -262,7 +262,7 @@ function parseSS(link) {
 
 function parseVLESS(link) {
   if (!link.startsWith('vless://')) {
-    throw new Error('Not a VLESS link');
+    throw new Error('Bukan link VLESS');
   }
 
   const clean = link.replace('vless://', '');
@@ -298,12 +298,12 @@ function parseVLESS(link) {
     type: 'vless',
     uuid,
     host,
-    port: parseInt(port),
-    security: params.security || 'none',
+    port: parseInt(port, 10),
+    security: params.security || 'none', // none, tls, reality
     flow: params.flow || '',
-    type: params.type || 'tcp', // Network type
+    network: params.type || 'tcp', // Gunakan 'network' untuk konsistensi
     path: params.path || (params.type === 'ws' ? '/' : ''),
-    host_header: params.host || '', // Explicit host header
+    host_header: params.host || '', // Simpan host header secara eksplisit
     sni: params.sni || params.host || host,
     fp: params.fp || '',
     pbk: params.pbk || '', // Public Key for REALITY
@@ -311,15 +311,13 @@ function parseVLESS(link) {
     spx: params.spx || '', // SpiderX for REALITY
     alpn: params.alpn || '',
     allowInsecure: params.allowInsecure === '1' || params.allowInsecure === 'true' || false,
-    name: name,
-    // Add any other parameters found in the link
-    ...Object.fromEntries(Object.entries(params).filter(([k]) => !['security', 'flow', 'type', 'path', 'host', 'sni', 'fp', 'pbk', 'sid', 'spx', 'alpn', 'allowInsecure', 'ps'].includes(k)))
+    name: name
   };
 }
 
 function parseVMess(link) {
   if (!link.startsWith('vmess://')) {
-    throw new Error('Not a VMess link');
+    throw new Error('Bukan link VMess');
   }
 
   const base64 = link.replace('vmess://', '');
@@ -331,13 +329,13 @@ function parseVMess(link) {
       type: 'vmess',
       uuid: obj.id,
       host: obj.add,
-      port: parseInt(obj.port),
-      alterId: parseInt(obj.aid) || 0,
+      port: parseInt(obj.port, 10),
+      alterId: parseInt(obj.aid, 10) || 0,
       security: obj.sc || obj.cipher || 'auto', // Prefer 'sc', fallback to 'cipher'
-      network: obj.net || 'tcp',
+      network: obj.net || 'tcp', // Gunakan 'network' untuk konsistensi
       type: obj.type || 'none', // VMess specific type (e.g., for kcp)
       path: obj.path || (obj.net === 'ws' ? '/' : ''),
-      host_header: obj.host || obj.add, // Explicit host header
+      host_header: obj.host || obj.add, // Simpan host header secara eksplisit
       sni: obj.sni || obj.host || obj.add,
       tls: obj.tls === 'tls',
       alpn: obj.alpn || '',
@@ -351,7 +349,7 @@ function parseVMess(link) {
 
 function parseTrojan(link) {
   if (!link.startsWith('trojan://')) {
-    throw new Error('Not a Trojan link');
+    throw new Error('Bukan link Trojan');
   }
 
   const match = link.match(/^trojan:\/\/([^@]+)@([^#?]+)(\?[^#]+)?(#.*)?$/);
@@ -380,18 +378,16 @@ function parseTrojan(link) {
     type: 'trojan',
     password: userinfo,
     host,
-    port: parseInt(port),
-    security: params.security || 'tls', // Usually tls for trojan
-    network: params.type || 'tcp', // Transport type
+    port: parseInt(port, 10),
+    security: 'tls', // Trojan biasanya TLS
+    network: params.type || 'tcp', // Gunakan 'network' untuk konsistensi
     path: params.path || (params.type === 'ws' ? '/' : ''),
-    host_header: params.host || host, // Explicit host header
+    host_header: params.host || host, // Simpan host header secara eksplisit
     sni: params.sni || params.host || host,
     alpn: params.alpn || '',
     fp: params.fp || '',
     allowInsecure: params.allowInsecure === '1' || params.allowInsecure === 'true' || false,
     name,
-    // Add any other parameters found in the link
-    ...Object.fromEntries(Object.entries(params).filter(([k]) => !['security', 'type', 'path', 'host', 'sni', 'alpn', 'fp', 'allowInsecure'].includes(k)))
   };
 }
 
@@ -417,14 +413,13 @@ function parseAnyLink(link) {
 function toClash(config) {
   switch (config.type) {
     case 'vless':
-      let vlessConfig = `
-- name: "${config.name.replace(/"/g, '\\"')}"
+      let vlessConfig = `- name: "${config.name.replace(/"/g, '\\"')}"
   type: vless
   server: ${config.host}
   port: ${config.port}
   uuid: ${config.uuid}
   udp: true
-  skip-cert-verify: ${config.allowInsecure}
+  skip-cert-verify: ${!!config.allowInsecure}
 `;
       if (config.security === 'tls' || config.security === 'reality') {
         vlessConfig += `  tls: true\n`;
@@ -443,19 +438,21 @@ function toClash(config) {
         vlessConfig += `  tls: false\n`;
       }
 
-      if (config.type === 'ws') { // network type
+      // Tangani berdasarkan network type
+      if (config.network === 'ws') {
         vlessConfig += `  network: ws\n`;
-        vlessConfig += `  ws-path: ${config.path}\n`;
+        vlessConfig += `  ws-path: ${config.path || '/'}\n`;
         if (config.host_header) {
           vlessConfig += `  ws-headers:\n    Host: ${config.host_header}\n`;
         }
       }
-      // Tambahkan penanganan lain jika diperlukan (grpc, http, dsb.)
-      return vlessConfig.trim();
+      // Untuk 'tcp' dan tipe lain yang tidak memerlukan konfigurasi khusus di Clash,
+      // tidak perlu menambahkan baris apa pun. Clash akan menggunakan default (tcp).
+
+      return vlessConfig;
 
     case 'vmess':
-      let vmessConfig = `
-- name: "${config.name.replace(/"/g, '\\"')}"
+      let vmessConfig = `- name: "${config.name.replace(/"/g, '\\"')}"
   type: vmess
   server: ${config.host}
   port: ${config.port}
@@ -463,7 +460,7 @@ function toClash(config) {
   alterId: ${config.alterId}
   cipher: ${config.security}
   udp: true
-  skip-cert-verify: ${config.allowInsecure}
+  skip-cert-verify: ${!!config.allowInsecure}
 `;
       if (config.tls) {
         vmessConfig += `  tls: true\n`;
@@ -476,43 +473,41 @@ function toClash(config) {
 
       if (config.network === 'ws') {
         vmessConfig += `  network: ws\n`;
-        vmessConfig += `  ws-path: ${config.path}\n`;
+        vmessConfig += `  ws-path: ${config.path || '/'}\n`;
         if (config.host_header) {
           vmessConfig += `  ws-headers:\n    Host: ${config.host_header}\n`;
         }
       }
-      // Tambahkan penanganan lain jika diperlukan
-      return vmessConfig.trim();
+
+      return vmessConfig;
 
     case 'trojan':
-      let trojanConfig = `
-- name: "${config.name.replace(/"/g, '\\"')}"
+      let trojanConfig = `- name: "${config.name.replace(/"/g, '\\"')}"
   type: trojan
   server: ${config.host}
   port: ${config.port}
   password: ${config.password}
   udp: true
-  skip-cert-verify: ${config.allowInsecure}
+  skip-cert-verify: ${!!config.allowInsecure}
+  tls: true
 `;
-      // Trojan usually implies TLS
-      trojanConfig += `  tls: true\n`;
+      // Trojan biasanya TLS
       if(config.sni) trojanConfig += `  sni: ${config.sni}\n`;
       if(config.alpn) trojanConfig += `  alpn: [${config.alpn.split(',').map(a => `"${a.trim()}"`).join(', ')}]\n`;
       if(config.fp) trojanConfig += `  fingerprint: ${config.fp}\n`;
 
       if (config.network === 'ws') {
         trojanConfig += `  network: ws\n`;
-        trojanConfig += `  ws-path: ${config.path}\n`;
+        trojanConfig += `  ws-path: ${config.path || '/'}\n`;
         if (config.host_header) {
           trojanConfig += `  ws-headers:\n    Host: ${config.host_header}\n`;
         }
       }
-      // Tambahkan penanganan lain jika diperlukan
-      return trojanConfig.trim();
+
+      return trojanConfig;
 
     case 'ss':
-      let ssConfig = `
-- name: "${config.name.replace(/"/g, '\\"')}"
+      let ssConfig = `- name: "${config.name.replace(/"/g, '\\"')}"
   type: ss
   server: ${config.host}
   port: ${config.port}
@@ -523,17 +518,17 @@ function toClash(config) {
       if (config.plugin) {
         ssConfig += `  plugin: ${config.plugin}\n`;
         if (config.pluginOpts) {
-           ssConfig += `  plugin-opts: ${config.pluginOpts}\n`; // Assume it's a valid YAML string
+           ssConfig += `  plugin-opts: ${config.pluginOpts}\n`;
         } else if (config.obfs) {
-           // Fallback if pluginOpts not directly available but obfs params are
            ssConfig += `  plugin-opts:\n    mode: ${config.obfs}\n`;
            if (config.obfsHost) ssConfig += `    host: ${config.obfsHost}\n`;
         }
       }
-      return ssConfig.trim();
+      return ssConfig;
 
     default:
-      throw new Error(`Unsupported type for Clash: ${config.type}`);
+      // Pesan error yang lebih umum
+      throw new Error(`Tidak dapat mengkonversi protokol '${config.type}' ke format Clash.`);
   }
 }
 
@@ -544,7 +539,7 @@ function toSurge(config) {
     case 'vless':
       // Surge support for VLESS is limited or requires specific modules/plugins
       // This is a basic structure, might need adjustments
-      let vlessOpts = `skip-cert-verify=${config.allowInsecure}`;
+      let vlessOpts = `skip-cert-verify=${!!config.allowInsecure}`;
       if (config.security === 'tls') {
          vlessOpts += `, tls=true, sni=${config.sni}`;
          if(config.alpn) vlessOpts += `, alpn=${config.alpn}`;
@@ -554,13 +549,13 @@ function toSurge(config) {
          vlessOpts += `, tls=true, sni=${config.sni}`; // Fallback
       }
       if (config.flow) vlessOpts += `, flow=${config.flow}`;
-      if (config.type === 'ws') { // network type
+      if (config.network === 'ws') {
         vlessOpts += `, ws=true, ws-path=${config.path}`;
         if (config.host_header) vlessOpts += `, ws-headers=Host:${config.host_header}`;
       }
       return `${config.name} = vless, ${config.host}, ${config.port}, username=${config.uuid}, ${vlessOpts}`;
     case 'vmess':
-      let vmessOpts = `skip-cert-verify=${config.allowInsecure}`;
+      let vmessOpts = `skip-cert-verify=${!!config.allowInsecure}`;
       if (config.tls) {
          vmessOpts += `, tls=true, sni=${config.sni}`;
          if(config.alpn) vmessOpts += `, alpn=${config.alpn}`;
@@ -572,7 +567,7 @@ function toSurge(config) {
       }
       return `${config.name} = vmess, ${config.host}, ${config.port}, username=${config.uuid}, ${vmessOpts}`;
     case 'trojan':
-      let trojanOpts = `skip-cert-verify=${config.allowInsecure}`;
+      let trojanOpts = `skip-cert-verify=${!!config.allowInsecure}`;
       trojanOpts += `, sni=${config.sni}`; // Usually TLS
       if(config.alpn) trojanOpts += `, alpn=${config.alpn}`;
       if(config.fp) trojanOpts += `, server-cert-fingerprint-sha256=${config.fp}`;
@@ -601,7 +596,7 @@ function toQuantumult(config) {
   switch (config.type) {
     case 'vless':
       // Quantumult X has better VLESS support
-      let vlessParams = `skip-cert-verify=${config.allowInsecure}`;
+      let vlessParams = `skip-cert-verify=${!!config.allowInsecure}`;
       if (config.security === 'tls') {
          vlessParams += `, tls=true, sni=${config.sni}`;
          if(config.alpn) vlessParams += `, alpn=${config.alpn}`;
@@ -611,13 +606,13 @@ function toQuantumult(config) {
          vlessParams += `, tls=true, sni=${config.sni}`; // Fallback
       }
       if (config.flow) vlessParams += `, flow=${config.flow}`;
-      if (config.type === 'ws') { // network type
+      if (config.network === 'ws') {
         vlessParams += `, ws=true, ws-path=${config.path}`;
         if (config.host_header) vlessParams += `, ws-headers=Host:${config.host_header}`;
       }
       return `vmess=${config.host}:${config.port}, method=none, password=${config.uuid}, ${vlessParams}, tag=${config.name}`;
     case 'vmess':
-      let vmessParams = `skip-cert-verify=${config.allowInsecure}`;
+      let vmessParams = `skip-cert-verify=${!!config.allowInsecure}`;
       if (config.tls) {
          vmessParams += `, tls=${config.tls}, sni=${config.sni}`;
          if(config.alpn) vmessParams += `, alpn=${config.alpn}`;
@@ -629,7 +624,7 @@ function toQuantumult(config) {
       }
       return `vmess=${config.host}:${config.port}, method=none, password=${config.uuid}, ${vmessParams}, tag=${config.name}`;
     case 'trojan':
-      let trojanParams = `skip-cert-verify=${config.allowInsecure}`;
+      let trojanParams = `skip-cert-verify=${!!config.allowInsecure}`;
       trojanParams += `, over-tls=true, tls-host=${config.sni}`; // Usually TLS
       if(config.alpn) trojanParams += `, alpn=${config.alpn}`;
       if(config.fp) trojanParams += `, tls-cert-sha256=${config.fp}`;
@@ -673,7 +668,7 @@ function toSingBox(config) {
       base.tls = {
         enabled: true,
         server_name: config.sni || config.host,
-        insecure: config.allowInsecure
+        insecure: !!config.allowInsecure
       };
       if (config.alpn) {
          base.tls.alpn = config.alpn.split(',').map(a => a.trim()).filter(a => a);
@@ -707,7 +702,7 @@ function toSingBox(config) {
     base.tls = {
       enabled: true,
       server_name: config.sni || config.host,
-      insecure: config.allowInsecure,
+      insecure: !!config.allowInsecure,
       utls: { enabled: true, fingerprint: config.fp || "chrome" }
     };
     if (config.alpn) {
@@ -747,11 +742,22 @@ function toSingBox(config) {
 // 🧩 TEMPLATE SYSTEM — Load from files
 // ================================
 
+// Simple in-memory cache for templates
+const templateCache = {};
+
 async function loadTemplateText(format) {
+  // Check cache first
+  if (templateCache[format]) {
+    return templateCache[format];
+  }
+
   try {
     const ext = format === 'clash' ? 'yaml' : 'conf';
     const templatePath = path.join(__dirname, 'templates', `${format}.${ext}`);
-    return await fs.readFile(templatePath, 'utf8');
+    const content = await fs.readFile(templatePath, 'utf8');
+    // Store in cache
+    templateCache[format] = content;
+    return content;
   } catch (error) {
     console.error(`Gagal load template ${format}:`, error.message);
     throw new Error(`Template ${format} tidak ditemukan`);
@@ -798,47 +804,63 @@ async function generateQuantumultConfig(results) {
 }
 
 // ================================
-// 🔄 ENDPOINT CONVERT — SINGLE & BATCH (Tampil Langsung, Bukan Download)
+// 🔄 ENDPOINT CONVERT — SINGLE & BATCH (Tampil Langsung, Bukan Download) - DIPERBAIKI
 // ================================
 
 // Endpoint untuk konversi tunggal atau batch dan MENAMPILKAN hasilnya (bukan download)
 app.get('/convert/:format', async (req, res) => {
-  const format = req.params.format;
+  const format = req.params.format.toLowerCase(); // Pastikan lowercase
   const { link, links } = req.query;
 
+  // 1. Validasi Format
   if (!['clash', 'surge', 'quantumult', 'singbox'].includes(format)) {
-    return res.status(400).json({ error: "Format tidak didukung. Gunakan: clash, surge, quantumult, singbox" });
+    return res.status(400).send(`Error: Format tidak didukung. Gunakan: clash, surge, quantumult, singbox`);
   }
 
+  // 2. Siapkan Array Link
   let linkArray = [];
   if (links) {
     linkArray = links.split(',').map(l => l.trim()).filter(l => l.length > 0);
   } else if (link) {
     linkArray = [link.trim()];
   } else {
-    return res.status(400).json({ error: "Parameter 'link' atau 'links' wajib diisi" });
+    return res.status(400).send(`Error: Parameter 'link' atau 'links' wajib diisi`);
   }
 
-  if (linkArray.length === 0) return res.status(400).json({ error: "Tidak ada link valid ditemukan" });
+  if (linkArray.length === 0) {
+     return res.status(400).send(`Error: Tidak ada link valid ditemukan`);
+  }
 
   try {
+    // 3. Proses Konversi
     const results = [];
-    for (const link of linkArray) {
+    for (const singleLink of linkArray) {
       try {
-        const parsed = parseAnyLink(link);
-        const formats = {
-          clash: toClash(parsed),
-          surge: toSurge(parsed),
-          quantumult: toQuantumult(parsed),
-          singbox: toSingBox(parsed)
-        };
-        results.push({ original: parsed, formats, link });
-      } catch (error) {
-        results.push({ error: error.message, link });
+        const parsed = parseAnyLink(singleLink);
+        let convertedConfig = '';
+        switch (format) {
+          case 'clash': convertedConfig = toClash(parsed); break;
+          case 'surge': convertedConfig = toSurge(parsed); break;
+          case 'quantumult': convertedConfig = toQuantumult(parsed); break;
+          case 'singbox': convertedConfig = toSingBox(parsed); break;
+          default: throw new Error(`Internal error: Format tidak dikenali dalam loop`); // Seharusnya tidak terjadi
+        }
+        results.push({
+            original_link: singleLink,
+            parsed_config: parsed, // Opsional, bisa dihapus jika tidak perlu
+            converted: convertedConfig
+        });
+      } catch (convertError) {
+        // Tangkap error spesifik parsing/konversi untuk satu link
+        console.error(`Gagal konversi link (${singleLink}):`, convertError.message);
+        results.push({
+            original_link: singleLink,
+            error: convertError.message // Hanya pesan error, bukan stack trace
+        });
       }
     }
 
-    // Tentukan MIME type berdasarkan format
+    // 4. Tentukan MIME type berdasarkan format
     const mimeTypes = {
       clash: 'text/yaml',
       surge: 'text/plain',
@@ -846,34 +868,57 @@ app.get('/convert/:format', async (req, res) => {
       singbox: 'application/json'
     };
 
-    // Jika hanya 1 link, tampilkan konfigurasinya langsung
-    if (linkArray.length === 1 && !results[0].error) {
+    // 5. Tentukan Respon Berdasarkan Hasil
+    // Cek jika semua link berhasil
+    const allSuccessful = results.every(r => !r.hasOwnProperty('error'));
+
+    if (allSuccessful) {
+        // Jika semua berhasil, tampilkan hasil konversi
         res.set('Content-Type', mimeTypes[format]);
         // HAPUS Content-Disposition agar tidak download
         // res.set('Content-Disposition', 'attachment; filename="proxy.conf"');
-        return res.send(results[0].formats[format]);
+
+        if (linkArray.length === 1) {
+            // Untuk satu link, tampilkan hasil konversinya langsung
+            return res.send(results[0].converted);
+        } else {
+            // Untuk batch, gabungkan hasilnya (dengan pemisah baris kosong atau komentar)
+            if (format === 'singbox') {
+                // Untuk singbox, jika ingin array JSON
+                const validConfigs = results.map(r => r.converted); // r.converted sudah string JSON
+                try {
+                   // Coba parse dan gabungkan jika perlu, atau tampilkan sebagai array string
+                   const parsedConfigs = validConfigs.map(c => JSON.parse(c));
+                   res.set('Content-Type', 'application/json');
+                   return res.send(JSON.stringify(parsedConfigs, null, 2));
+                } catch (e) {
+                   // Jika gagal parse, kirim sebagai teks biasa
+                   return res.send(validConfigs.join('\n\n---\n\n'));
+                }
+            } else {
+                // Untuk format teks lain (clash, surge, quantumult)
+                const combinedConfigs = results.map(r => r.converted).join('\n\n');
+                return res.send(combinedConfigs);
+            }
+        }
+    } else {
+        // Jika ada yang gagal, tampilkan ringkasan error
+        // Kita bisa memilih untuk menampilkan error saja, atau hasil + error
+        // Untuk kesederhanaan, tampilkan error saja jika ada yang gagal
+        const errorMessages = results.filter(r => r.error).map(r => `Link: ${r.original_link}\nError: ${r.error}`).join('\n\n');
+        res.set('Content-Type', 'text/plain');
+        return res.status(400).send(`Beberapa link gagal dikonversi:\n\n${errorMessages}`);
+        // Atau, jika ingin tetap menampilkan hasil yang berhasil juga:
+        // const successfulResults = results.filter(r => !r.error).map(r => r.converted).join('\n\n---\n\n');
+        // const errorMessages = results.filter(r => r.error).map(r => `# Error (${r.original_link}): ${r.error}`).join('\n\n');
+        // const output = [successfulResults, errorMessages].filter(part => part).join('\n\n---\n\n'); // Gabungkan, hilangkan bagian kosong
+        // return res.status(400).send(output || "Tidak ada hasil yang berhasil."); // 400 jika ada error
     }
 
-    // Jika lebih dari 1 link atau ada error, tampilkan sebagai daftar
-    // Atau, jika ingin selalu tampilkan daftar hasil, gunakan blok ini:
-    // if (format === 'singbox') {
-    //    res.set('Content-Type', mimeTypes[format]);
-    //    const validConfigs = results.filter(r => !r.error).map(r => JSON.parse(r.formats.singbox));
-    //    return res.send(JSON.stringify(validConfigs, null, 2));
-    // } else {
-    //    res.set('Content-Type', 'text/plain');
-    //    const validConfigs = results.filter(r => !r.error).map(r => r.formats[format]).join('\n\n---\n\n');
-    //    return res.send(validConfigs);
-    // }
-
-    // Atau, tampilkan hasil JSON untuk semua kasus batch/single-error
-    res.set('Content-Type', 'application/json');
-    return res.json({ format: format, results: results });
-
-
   } catch (error) {
-    console.error("Error di /convert/:format:", error);
-    res.status(500).json({ error: "Terjadi kesalahan internal server." });
+    // Tangkap error umum (yang tidak spesifik per link)
+    console.error("Error internal di /convert/:format:", error);
+    res.status(500).send(`Error: Terjadi kesalahan internal server saat memproses permintaan.`);
   }
 });
 
