@@ -2,85 +2,69 @@
 const fs = require('fs').promises;
 const path = require('path');
 
-// --- Fungsi Ekstraksi Link dengan Log Debugging (Diperbaiki) ---
+// --- Fungsi Ekstraksi Link dengan Log Debugging (Versi Fleksibel - Cari Semua Pola) ---
+// Versi ini mencari dan mengekstrak link VPN berdasarkan awalan, bukan struktur input.
 async function extractLinks(rawInput) {
-  console.log("--- DEBUG: Mulai proses ekstraksi link ---");
-  // Batasi panjang log untuk mencegah log terlalu panjang
-  console.log("Input 'link' dari user (potongan):", rawInput.substring(0, 200) + (rawInput.length > 200 ? "..." : ""));
+  console.log("--- DEBUG: Mulai proses ekstraksi link (Fleksibel - Cari Semua Pola) ---");
+  console.log("Panjang input 'link' dari user:", rawInput.length);
+  // Tidak perlu log seluruh input karena bisa sangat panjang
 
-  const linkStartPattern = /(vless:\/\/|vmess:\/\/|trojan:\/\/|ss:\/\/)/g;
-  let match;
-  const potentialLinkStarts = [];
-
-  while ((match = linkStartPattern.exec(rawInput)) !== null) {
-    potentialLinkStarts.push({ type: match[1], index: match.index });
-  }
-
-  console.log("DEBUG: Posisi awal link yang ditemukan:", potentialLinkStarts);
-
-  if (potentialLinkStarts.length === 0) {
-     console.log("DEBUG: Tidak ditemukan awal link VPN yang dikenali.");
-     throw new Error('Tidak ditemukan link VPN yang dikenali dalam input.');
+  if (!rawInput || typeof rawInput !== 'string') {
+     console.log("DEBUG: Input tidak valid atau kosong.");
+     throw new Error('Input link tidak valid.');
   }
 
   const extractedLinks = [];
-  for (let i = 0; i < potentialLinkStarts.length; i++) {
-    const start = potentialLinkStarts[i].index;
-    
-    // --- Perbaikan Logika Akhir Link ---
-    // Tentukan akhir link:
-    // 1. Awal link berikutnya (jika ada)
-    // 2. Atau, karakter pemisah umum pertama setelah awal link ini (misalnya koma)
-    // 3. Atau, akhir string input
-    let end = rawInput.length; // Default ke akhir string
+  // --- Perubahan Utama: Gunakan Regex Global untuk Menemukan SEMUA Kemunculan ---
+  // Regex untuk mencocokkan seluruh link VPN lengkap berdasarkan awalan
+  // Gunakan non-greedy match .*? untuk berhenti di karakter tertentu
+  // \s berarti spasi, tab, newline, dll. [,\s] berarti koma atau spasi putih.
+  const linkFullPattern = /(vless:\/\/[^\s,]*?#[^\s,]*?|vless:\/\/[^\s,]*?(?=[,\s]|$))|(vmess:\/\/[^\s,]*?#[^\s,]*?|vmess:\/\/[^\s,]*?(?=[,\s]|$))|(trojan:\/\/[^\s,]*?#[^\s,]*?|trojan:\/\/[^\s,]*?(?=[,\s]|$))|(ss:\/\/[^\s,]*?#[^\s,]*?|ss:\/\/[^\s,]*?(?=[,\s]|$))/gi;
 
-    // Cari awal link berikutnya
-    if (i < potentialLinkStarts.length - 1) {
-        end = potentialLinkStarts[i + 1].index;
-    } else {
-        // Jika ini link terakhir, cari pemisah umum setelah `start`
-        // Misalnya, cari koma pertama
-        const commaIndex = rawInput.indexOf(',', start);
-        if (commaIndex !== -1) {
-            end = commaIndex;
-        }
-        // Bisa ditambahkan pengecekan untuk pemisah lain seperti spasi jika diperlukan
-        // const spaceIndex = rawInput.indexOf(' ', start);
-        // if (spaceIndex !== -1 && (end === rawInput.length || spaceIndex < end)) {
-        //     end = spaceIndex;
-        // }
-    }
-    // --- Akhir Perbaikan ---
+  let match;
+  let matchCount = 0;
+  const foundMatches = []; // Untuk log
 
-    // Ekstrak substring dan trim
-    const potentialLink = rawInput.substring(start, end).trim();
+  while ((match = linkFullPattern.exec(rawInput)) !== null) {
+    matchCount++;
+    // match[0] berisi seluruh link yang cocok
+    // Karena regex memiliki beberapa grup capture, kita ambil yang tidak null/undefined
+    // match[0] adalah hasil keseluruhan, sisanya adalah grup-grup opsional
+    const matchedLink = match[0] || ''; // Prioritaskan match[0]
 
-    console.log(`DEBUG: Mengekstrak potensi link ${i+1} (start: ${start}, end: ${end}):`, potentialLink.substring(0, 100) + (potentialLink.length > 100 ? "..." : ""));
+    if (matchedLink) {
+       foundMatches.push({ index: match.index, link: matchedLink.substring(0, 100) + (matchedLink.length > 100 ? "..." : "") });
 
-    // Validasi sederhana
-    if (potentialLink.length > 20 && (potentialLink.includes('@') || potentialLink.includes('#'))) {
-       console.log(`DEBUG: Potensi link ${i+1} lolos validasi awal.`);
-       extractedLinks.push(potentialLink);
-    } else {
-        console.warn(`DEBUG: Potensi link ${i+1} diabaikan karena tidak lulus validasi awal. Panjang: ${potentialLink.length}, Ada @: ${potentialLink.includes('@')}, Ada #: ${potentialLink.includes('#')}`);
+       // Validasi sederhana tambahan sebelum push
+       // Panjang > 30 dan mengandung karakter khas link (@ untuk userinfo/host, # untuk fragment/tag)
+       if (matchedLink.length > 30 && (matchedLink.includes('@') || matchedLink.includes('#'))) {
+          console.log(`DEBUG: Link ${matchCount} ditemukan dan lolos validasi awal.`);
+          extractedLinks.push(matchedLink);
+       } else {
+           console.warn(`DEBUG: Link ${matchCount} ditemukan tapi diabaikan karena tidak lulus validasi awal. Panjang: ${matchedLink.length}, Ada @: ${matchedLink.includes('@')}, Ada #: ${matchedLink.includes('#')}`);
+       }
     }
   }
 
-  console.log("DEBUG: Link yang berhasil diekstrak:", extractedLinks.map(l => l.substring(0, 50) + (l.length > 50 ? "..." : "")));
+  console.log(`DEBUG: Total kemungkinan link ditemukan oleh regex: ${matchCount}`);
+  console.log("DEBUG: Detail link yang ditemukan (potongan):", foundMatches);
+  console.log("DEBUG: Link yang berhasil diekstrak (final):", extractedLinks.map(l => l.substring(0, 50) + (l.length > 50 ? "..." : "")));
   console.log("--- DEBUG: Akhir proses ekstraksi link ---");
 
   if (extractedLinks.length === 0) {
-     throw new Error('Tidak ada link VPN yang valid ditemukan dalam input.');
+     throw new Error('Tidak ditemukan link VPN yang valid dalam input. Pastikan link dimulai dengan vless://, vmess://, trojan://, atau ss://.');
   }
 
   return extractedLinks;
 }
+// --- Akhir Fungsi Ekstraksi Link yang Diperbarui ---
 
 
 // ================================
 // 🔄 PARSER & CONVERTER — VLESS, VMess, Trojan, Shadowsocks (SUPPORT WS!)
 // ================================
 
+// --- Fungsi Parsing tetap sama seperti sebelumnya ---
 function parseSS(link) {
   if (!link.startsWith('ss://')) {
     throw new Error('Not a Shadowsocks link');
@@ -886,7 +870,7 @@ async function handleConvertRequest(req, res) {
   }
 
   try {
-    // --- 1. Ekstrak Link ---
+    // --- 1. Ekstrak Link (Versi Fleksibel) ---
     const extractedLinks = await extractLinks(link);
 
     // --- 2. Proses Konversi untuk Semua Link yang Terdeteksi ---
