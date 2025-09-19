@@ -4,7 +4,11 @@ const cors = require('cors');
 const fetch = require('node-fetch');
 const net = require('net');
 
-const { handleConvertRequest } = require('./converter');
+// --- Perubahan Penting: Impor handler POST ---
+// Sebelumnya hanya mengimpor handleConvertRequest untuk GET
+// Sekarang kita impor kedua handler
+const { handleConvertRequest, handleConvertPostRequest } = require('./converter');
+// --- Akhir Perubahan ---
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -16,8 +20,9 @@ const startTime = Date.now();
 
 // --- Middleware ---
 app.use(cors());
-app.use(express.json());
-app.use(express.text());
+// Middleware untuk parsing JSON dan teks biasa dari body request
+app.use(express.json({ limit: '10mb' })); // Naikkan limit jika perlu
+app.use(express.text({ type: 'text/*', limit: '10mb' })); // Untuk teks mentah
 
 // --- Logging Middleware ---
 app.use((req, res, next) => {
@@ -37,7 +42,6 @@ async function sendTelegramAlert(message) {
   }
 
   try {
-    // ✅ PERBAIKAN KRITIS — hapus spasi setelah /bot
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
     await fetch(url, {
       method: 'POST',
@@ -203,15 +207,22 @@ app.get('/ping', (req, res) => {
   });
 });
 
-// --- Endpoint: /convert/:format ---
-// Mengarahkan ke fungsi di converter.js
+// ================================
+// 🔄 ENDPOINT CONVERT — GET & POST
+// ================================
+
+// --- Endpoint GET (tetap ada untuk kompatibilitas) ---
 app.get('/convert/:format', handleConvertRequest);
+
+// --- Endpoint POST (baru untuk fleksibilitas tinggi) ---
+// Menerima array link dalam body JSON: { "links": ["link1", "link2", ...] }
+app.post('/convert/:format', handleConvertPostRequest);
 
 // --- Fallback ---
 app.use('*', (req, res) => {
   res.status(404).json({
     success: false,
-    error: 'Endpoint not found. Use /health?proxy=IP:PORT or /convert/:format?link=...',
+    error: 'Endpoint not found. Use /health?proxy=IP:PORT, /convert/:format?link=..., or POST /convert/:format with { "links": [...] }',
   });
 });
 
