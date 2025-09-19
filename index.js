@@ -804,10 +804,9 @@ async function generateQuantumultConfig(results) {
 }
 
 // ================================
-// 🔄 ENDPOINT CONVERT — SINGLE & BATCH (Tampil Langsung, Bukan Download) - DIPERBAIKI
+// 🔄 ENDPOINT CONVERT — SINGLE & BATCH (Tampil Langsung, Bukan Download) - DIPERBAIKI UNTUK MULTIPLE LINK DAN TEMPLATE
 // ================================
 
-// Endpoint untuk konversi tunggal atau batch dan MENAMPILKAN hasilnya (bukan download)
 app.get('/convert/:format', async (req, res) => {
   const format = req.params.format.toLowerCase(); // Pastikan lowercase
   const { link, links } = req.query;
@@ -832,30 +831,33 @@ app.get('/convert/:format', async (req, res) => {
   }
 
   try {
-    // 3. Proses Konversi
+    // 3. Proses Konversi dan Generate Template
     const results = [];
     for (const singleLink of linkArray) {
       try {
         const parsed = parseAnyLink(singleLink);
-        let convertedConfig = '';
-        switch (format) {
-          case 'clash': convertedConfig = toClash(parsed); break;
-          case 'surge': convertedConfig = toSurge(parsed); break;
-          case 'quantumult': convertedConfig = toQuantumult(parsed); break;
-          case 'singbox': convertedConfig = toSingBox(parsed); break;
-          default: throw new Error(`Internal error: Format tidak dikenali dalam loop`); // Seharusnya tidak terjadi
-        }
-        results.push({
-            original_link: singleLink,
-            parsed_config: parsed, // Opsional, bisa dihapus jika tidak perlu
-            converted: convertedConfig
-        });
+        // Gunakan nama tag dari link asli jika tersedia, atau gunakan nama default
+        const configName = parsed.name || "Proxy Server"; // Prioritaskan nama dari link
+
+        // Buat objek config dengan semua parameter yang diperlukan
+        const config = {
+          ...parsed,
+          name: configName,
+          network: parsed.network || 'tcp' // Jika tidak ada, default tcp
+        };
+
+        const formats = {
+          clash: toClash(config),
+          surge: toSurge(config),
+          quantumult: toQuantumult(config),
+          singbox: toSingBox(config)
+        };
+        results.push({ original: config, formats, link: singleLink });
       } catch (convertError) {
-        // Tangkap error spesifik parsing/konversi untuk satu link
         console.error(`Gagal konversi link (${singleLink}):`, convertError.message);
         results.push({
             original_link: singleLink,
-            error: convertError.message // Hanya pesan error, bukan stack trace
+            error: convertError.message
         });
       }
     }
@@ -873,46 +875,38 @@ app.get('/convert/:format', async (req, res) => {
     const allSuccessful = results.every(r => !r.hasOwnProperty('error'));
 
     if (allSuccessful) {
-        // Jika semua berhasil, tampilkan hasil konversi
+        // Jika semua berhasil, tampilkan hasil konversi dengan template
+        let config = '';
+        switch (format) {
+          case 'clash': config = await generateClashConfig(results); break;
+          case 'surge': config = await generateSurgeConfig(results); break;
+          case 'quantumult': config = await generateQuantumultConfig(results); break;
+          case 'singbox':
+            // Special handling for singbox full config
+            const templatePath = path.join(__dirname, 'templates', `singbox.json`);
+            let template;
+            try {
+                template = JSON.parse(await fs.readFile(templatePath, 'utf8'));
+            } catch (e) {
+                template = { outbounds: [{ tag: "proxy", type: "selector", outbounds: [] }] }; // Default template
+            }
+            const validProxies = results.filter(r => !r.error).map(r => JSON.parse(r.formats.singbox));
+            template.outbounds[0].outbounds.push(...validProxies.map(p => p.tag));
+            template.outbounds.push(...validProxies);
+            config = JSON.stringify(template, null, 2);
+            break;
+        }
+
+        // Set Content-Type dan kirimkan konfigurasi lengkap langsung
         res.set('Content-Type', mimeTypes[format]);
         // HAPUS Content-Disposition agar tidak download
-        // res.set('Content-Disposition', 'attachment; filename="proxy.conf"');
-
-        if (linkArray.length === 1) {
-            // Untuk satu link, tampilkan hasil konversinya langsung
-            return res.send(results[0].converted);
-        } else {
-            // Untuk batch, gabungkan hasilnya (dengan pemisah baris kosong atau komentar)
-            if (format === 'singbox') {
-                // Untuk singbox, jika ingin array JSON
-                const validConfigs = results.map(r => r.converted); // r.converted sudah string JSON
-                try {
-                   // Coba parse dan gabungkan jika perlu, atau tampilkan sebagai array string
-                   const parsedConfigs = validConfigs.map(c => JSON.parse(c));
-                   res.set('Content-Type', 'application/json');
-                   return res.send(JSON.stringify(parsedConfigs, null, 2));
-                } catch (e) {
-                   // Jika gagal parse, kirim sebagai teks biasa
-                   return res.send(validConfigs.join('\n\n---\n\n'));
-                }
-            } else {
-                // Untuk format teks lain (clash, surge, quantumult)
-                const combinedConfigs = results.map(r => r.converted).join('\n\n');
-                return res.send(combinedConfigs);
-            }
-        }
+        // res.set('Content-Disposition', 'attachment; filename="proxies.conf"');
+        return res.send(config);
     } else {
         // Jika ada yang gagal, tampilkan ringkasan error
-        // Kita bisa memilih untuk menampilkan error saja, atau hasil + error
-        // Untuk kesederhanaan, tampilkan error saja jika ada yang gagal
         const errorMessages = results.filter(r => r.error).map(r => `Link: ${r.original_link}\nError: ${r.error}`).join('\n\n');
         res.set('Content-Type', 'text/plain');
         return res.status(400).send(`Beberapa link gagal dikonversi:\n\n${errorMessages}`);
-        // Atau, jika ingin tetap menampilkan hasil yang berhasil juga:
-        // const successfulResults = results.filter(r => !r.error).map(r => r.converted).join('\n\n---\n\n');
-        // const errorMessages = results.filter(r => r.error).map(r => `# Error (${r.original_link}): ${r.error}`).join('\n\n');
-        // const output = [successfulResults, errorMessages].filter(part => part).join('\n\n---\n\n'); // Gabungkan, hilangkan bagian kosong
-        // return res.status(400).send(output || "Tidak ada hasil yang berhasil."); // 400 jika ada error
     }
 
   } catch (error) {
@@ -941,13 +935,20 @@ app.get('/convert/template/:format', async (req, res) => {
     for (const link of linkArray) {
       try {
         const parsed = parseAnyLink(link);
-        const formats = {
-          clash: toClash(parsed),
-          surge: toSurge(parsed),
-          quantumult: toQuantumult(parsed),
-          singbox: toSingBox(parsed)
+        // Gunakan nama tag dari link asli jika tersedia
+        const configName = parsed.name || "Proxy Server";
+        const config = {
+          ...parsed,
+          name: configName,
+          network: parsed.network || 'tcp'
         };
-        results.push({ original: parsed, formats, link });
+        const formats = {
+          clash: toClash(config),
+          surge: toSurge(config),
+          quantumult: toQuantumult(config),
+          singbox: toSingBox(config)
+        };
+        results.push({ original: config, formats, link });
       } catch (error) {
         results.push({ error: error.message, link });
       }
@@ -1012,13 +1013,20 @@ app.post('/convert/batch', async (req, res) => {
     for (const link of links) {
       try {
         const parsed = parseAnyLink(link);
-        const formats = {
-          clash: toClash(parsed),
-          surge: toSurge(parsed),
-          quantumult: toQuantumult(parsed),
-          singbox: toSingBox(parsed)
+        // Gunakan nama tag dari link asli jika tersedia
+        const configName = parsed.name || "Proxy Server";
+        const config = {
+          ...parsed,
+          name: configName,
+          network: parsed.network || 'tcp'
         };
-        results.push({ original: parsed, formats, link });
+        const formats = {
+          clash: toClash(config),
+          surge: toSurge(config),
+          quantumult: toQuantumult(config),
+          singbox: toSingBox(config)
+        };
+        results.push({ original: config, formats, link });
       } catch (error) {
         results.push({ error: error.message, link });
       }
