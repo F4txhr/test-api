@@ -2,10 +2,11 @@
 const fs = require('fs').promises;
 const path = require('path');
 
-// --- Fungsi Ekstraksi Link dengan Log Debugging ---
+// --- Fungsi Ekstraksi Link dengan Log Debugging (Diperbaiki) ---
 async function extractLinks(rawInput) {
   console.log("--- DEBUG: Mulai proses ekstraksi link ---");
-  console.log("Input 'link' dari user (potongan):", rawInput.substring(0, 100) + (rawInput.length > 100 ? "..." : ""));
+  // Batasi panjang log untuk mencegah log terlalu panjang
+  console.log("Input 'link' dari user (potongan):", rawInput.substring(0, 200) + (rawInput.length > 200 ? "..." : ""));
 
   const linkStartPattern = /(vless:\/\/|vmess:\/\/|trojan:\/\/|ss:\/\/)/g;
   let match;
@@ -25,20 +26,47 @@ async function extractLinks(rawInput) {
   const extractedLinks = [];
   for (let i = 0; i < potentialLinkStarts.length; i++) {
     const start = potentialLinkStarts[i].index;
-    const end = i < potentialLinkStarts.length - 1 ? potentialLinkStarts[i + 1].index : rawInput.length;
+    
+    // --- Perbaikan Logika Akhir Link ---
+    // Tentukan akhir link:
+    // 1. Awal link berikutnya (jika ada)
+    // 2. Atau, karakter pemisah umum pertama setelah awal link ini (misalnya koma)
+    // 3. Atau, akhir string input
+    let end = rawInput.length; // Default ke akhir string
+
+    // Cari awal link berikutnya
+    if (i < potentialLinkStarts.length - 1) {
+        end = potentialLinkStarts[i + 1].index;
+    } else {
+        // Jika ini link terakhir, cari pemisah umum setelah `start`
+        // Misalnya, cari koma pertama
+        const commaIndex = rawInput.indexOf(',', start);
+        if (commaIndex !== -1) {
+            end = commaIndex;
+        }
+        // Bisa ditambahkan pengecekan untuk pemisah lain seperti spasi jika diperlukan
+        // const spaceIndex = rawInput.indexOf(' ', start);
+        // if (spaceIndex !== -1 && (end === rawInput.length || spaceIndex < end)) {
+        //     end = spaceIndex;
+        // }
+    }
+    // --- Akhir Perbaikan ---
+
+    // Ekstrak substring dan trim
     const potentialLink = rawInput.substring(start, end).trim();
 
-    console.log(`DEBUG: Mengekstrak potensi link ${i+1}:`, potentialLink.substring(0, 50) + (potentialLink.length > 50 ? "..." : ""));
+    console.log(`DEBUG: Mengekstrak potensi link ${i+1} (start: ${start}, end: ${end}):`, potentialLink.substring(0, 100) + (potentialLink.length > 100 ? "..." : ""));
 
+    // Validasi sederhana
     if (potentialLink.length > 20 && (potentialLink.includes('@') || potentialLink.includes('#'))) {
        console.log(`DEBUG: Potensi link ${i+1} lolos validasi awal.`);
        extractedLinks.push(potentialLink);
     } else {
-        console.warn(`DEBUG: Potensi link ${i+1} diabaikan karena tidak lulus validasi awal.`);
+        console.warn(`DEBUG: Potensi link ${i+1} diabaikan karena tidak lulus validasi awal. Panjang: ${potentialLink.length}, Ada @: ${potentialLink.includes('@')}, Ada #: ${potentialLink.includes('#')}`);
     }
   }
 
-  console.log("DEBUG: Link yang berhasil diekstrak:", extractedLinks);
+  console.log("DEBUG: Link yang berhasil diekstrak:", extractedLinks.map(l => l.substring(0, 50) + (l.length > 50 ? "..." : "")));
   console.log("--- DEBUG: Akhir proses ekstraksi link ---");
 
   if (extractedLinks.length === 0) {
