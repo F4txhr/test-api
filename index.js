@@ -838,13 +838,15 @@ async function generateQuantumultConfig(results) {
 
   return template;
 }
+
 // ================================
 // 🔄 ENDPOINT CONVERT — SINGLE & BATCH (Tampil Langsung, Bukan Download)
-// Diperbaiki: Perilaku berbeda untuk 'link' vs 'links'
+// Diperbaiki: Tidak membedakan 'link'/'links', output disesuaikan jumlah akun
 // ================================
 
 app.get('/convert/:format', async (req, res) => {
   const format = req.params.format.toLowerCase();
+  // Terima kedua parameter untuk kompatibilitas, prioritaskan 'links'
   const { link, links } = req.query;
 
   // 1. Validasi Format
@@ -852,17 +854,13 @@ app.get('/convert/:format', async (req, res) => {
     return res.status(400).send(`Error: Format tidak didukung. Gunakan: clash, surge, quantumult, singbox`);
   }
 
-  // 2. Tentukan jenis permintaan: single atau batch
-  let isBatch = false;
+  // 2. Siapkan Array Link (prioritaskan 'links')
   let linkArray = [];
-
   if (links) {
-    // Jika parameter 'links' ada, ini adalah permintaan batch
-    isBatch = true;
+    // Jika 'links' ada, split jadi array
     linkArray = links.split(',').map(l => l.trim()).filter(l => l.length > 0);
   } else if (link) {
-    // Jika hanya parameter 'link' ada, ini adalah permintaan single
-    isBatch = false;
+    // Jika hanya 'link' ada, buat array dengan 1 item
     linkArray = [link.trim()];
   } else {
     return res.status(400).send(`Error: Parameter 'link' atau 'links' wajib diisi`);
@@ -873,7 +871,7 @@ app.get('/convert/:format', async (req, res) => {
   }
 
   try {
-    // 3. Proses Konversi
+    // 3. Proses Konversi untuk Semua Link
     const results = [];
     for (const singleLink of linkArray) {
       try {
@@ -885,7 +883,7 @@ app.get('/convert/:format', async (req, res) => {
         const config = {
           ...parsed,
           name: configName,
-          network: parsed.network || 'tcp' // Jika tidak ada, default tcp
+          network: parsed.network || 'tcp'
         };
 
         let convertedConfig = '';
@@ -912,22 +910,28 @@ app.get('/convert/:format', async (req, res) => {
 
     // 4. Tentukan MIME type berdasarkan format
     const mimeTypes = {
-      clash: 'text/yaml',
+      clash: 'text/yaml', // atau application/yaml
       surge: 'text/plain',
       quantumult: 'text/plain',
       singbox: 'application/json'
     };
 
-    // 5. Tentukan Respon Berdasarkan Jenis Permintaan dan Hasil
+    // 5. Tentukan Respon Berdasarkan Jumlah Akun dan Hasil
     const allSuccessful = results.every(r => !r.hasOwnProperty('error'));
 
     if (allSuccessful) {
-
-        if (isBatch) {
-            // --- Jika BATCH (menggunakan parameter 'links') ---
+        
+        // --- Output disesuaikan jumlah akun ---
+        res.set('Content-Type', mimeTypes[format]);
+        
+        if (linkArray.length === 1) {
+            // --- Jika 1 akun ---
+            // Kembalikan konfigurasi tunggal (bukan array)
+            return res.send(results[0].converted);
+            
+        } else {
+            // --- Jika lebih dari 1 akun ---
             // Kembalikan array/list konfigurasi MENTAH (bukan dari template)
-            res.set('Content-Type', mimeTypes[format]);
-
             if (format === 'singbox') {
                 // Untuk singbox, kembalikan array JSON dari objek konfigurasi
                 const arrayOfConfigs = results.map(r => JSON.parse(r.converted));
@@ -944,25 +948,19 @@ app.get('/convert/:format', async (req, res) => {
                 res.set('Content-Type', 'application/json'); // Ubah ke JSON karena array
                 return res.send(JSON.stringify(arrayOfConfigStrings, null, 2));
             }
-
-        } else {
-            // --- Jika SINGLE (menggunakan parameter 'link') ---
-            // Kembalikan konfigurasi tunggal MENTAH (bukan dari template)
-            res.set('Content-Type', mimeTypes[format]);
-            return res.send(results[0].converted);
         }
-
+        
     } else {
         // Jika ada yang gagal
-        if (isBatch) {
-             // Untuk batch, tetap tampilkan error dalam format teks
-             const errorMessages = results.filter(r => r.error).map(r => `Link: ${r.original_link}\nError: ${r.error}`).join('\n\n');
-             res.set('Content-Type', 'text/plain');
-             return res.status(400).send(`Beberapa link gagal dikonversi:\n\n${errorMessages}`);
-        } else {
+        if (linkArray.length === 1) {
              // Untuk single, tampilkan error sederhana
              res.set('Content-Type', 'text/plain');
              return res.status(400).send(`Gagal konversi link: ${results[0].error}`);
+        } else {
+             // Untuk multiple, tampilkan error dalam format teks
+             const errorMessages = results.filter(r => r.error).map(r => `Link: ${r.original_link}\nError: ${r.error}`).join('\n\n');
+             res.set('Content-Type', 'text/plain');
+             return res.status(400).send(`Beberapa link gagal dikonversi:\n\n${errorMessages}`);
         }
     }
 
@@ -971,8 +969,6 @@ app.get('/convert/:format', async (req, res) => {
     res.status(500).send(`Error: Terjadi kesalahan internal server saat memproses permintaan.`);
   }
 });
-      
-      
   
 // Endpoint untuk konversi batch dengan template lengkap dan DOWNLOAD
 app.get('/convert/template/:format', async (req, res) => {
