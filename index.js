@@ -383,10 +383,10 @@ function parseTrojan(link) {
 
   // Perbaikan ekstraksi yang lebih robust
   const cleanLink = link.substring('trojan://'.length);
-  
+
   const paramStartIndex = cleanLink.indexOf('?');
   const fragmentStartIndex = cleanLink.indexOf('#');
-  
+
   let userinfo_and_serverinfo = '';
   let paramString = '';
   let fragment = '';
@@ -715,9 +715,20 @@ function toQuantumult(config) {
   }
 }
 
+// --- Fungsi toSingBox dengan Log Debugging ---
 function toSingBox(config) {
+  // --- Tambahkan log ini untuk debugging ---
+  console.log("--- DEBUG: Memulai toSingBox untuk config ---");
+  console.log("DEBUG: config.type:", config.type);
+  console.log("DEBUG: config.name (tag):", config.name);
+  console.log("DEBUG: config.network:", config.network);
+  console.log("DEBUG: config.host_header:", config.host_header);
+  console.log("DEBUG: config.path:", config.path);
+  console.log("DEBUG: config.plugin:", config.plugin);
+  // --- Akhir log debugging ---
+
   let base = {
-    tag: config.name, // <-- Ini yang penting, menggunakan tag yang sudah dimodifikasi/unik
+    tag: config.name,
     type: config.type === 'ss' ? 'shadowsocks' : config.type,
     server: config.host,
     server_port: config.port
@@ -726,18 +737,27 @@ function toSingBox(config) {
   if (config.type === 'vless' || config.type === 'vmess') {
     base.uuid = config.uuid;
     if (config.type === 'vmess') base.alter_id = config.alterId;
-    // --- Perbaikan Utama: Tambahkan transport jika network bukan tcp default ---
+
+    // --- Tambahkan log ini ---
+    console.log("DEBUG: Memeriksa network untuk vless/vmess:", config.network);
     if (config.network === 'ws') {
+      console.log("DEBUG: Membuat transport WS untuk vless/vmess");
       base.transport = {
         type: 'ws',
         path: config.path || '/',
         headers: config.host_header ? { host: config.host_header } : {}
       };
+      console.log("DEBUG: Transport WS dibuat:", JSON.stringify(base.transport, null, 2));
     }
-    // Tambahkan penanganan untuk grpc, http, dsb. jika diperlukan di masa depan
-    // else if (config.network === 'grpc') { ... }
+    // --- Akhir log debugging ---
 
-    // TLS Configuration
+    if (config.network === 'grpc') {
+       base.transport = {
+         type: 'grpc',
+         service_name: config.serviceName || ''
+       };
+    }
+
     if (config.security === 'tls' || config.security === 'reality' || config.tls) {
       base.tls = {
         enabled: true,
@@ -764,15 +784,20 @@ function toSingBox(config) {
 
   } else if (config.type === 'trojan') {
     base.password = config.password;
-    // --- Perbaikan Utama: Tambahkan transport jika network bukan tcp default ---
+
+    // --- Tambahkan log ini ---
+    console.log("DEBUG: Memeriksa network untuk trojan:", config.network);
     if (config.network === 'ws') {
+      console.log("DEBUG: Membuat transport WS untuk trojan");
       base.transport = {
         type: 'ws',
         path: config.path || '/',
         headers: config.host_header ? { host: config.host_header } : {}
       };
+      console.log("DEBUG: Transport WS dibuat:", JSON.stringify(base.transport, null, 2));
     }
-    // TLS for Trojan (usually implied)
+    // --- Akhir log debugging ---
+
     base.tls = {
       enabled: true,
       server_name: config.sni || config.host,
@@ -786,9 +811,11 @@ function toSingBox(config) {
   } else if (config.type === 'ss') {
     base.method = config.method;
     base.password = config.password;
-    // --- Perbaikan Utama: Tambahkan plugin dan plugin_opts ---
+
+    // --- Tambahkan log ini ---
+    console.log("DEBUG: Memeriksa plugin untuk ss:", config.plugin);
     if (config.plugin) {
-       // Parse plugin string like: v2ray-plugin;tls;mode=websocket;host=...;path=...
+       console.log("DEBUG: Membuat plugin dan plugin_opts untuk ss");
        const pluginParts = config.plugin.split(';');
        const pluginName = pluginParts[0];
        if (pluginName.includes('v2ray-plugin') || pluginName.includes('obfs')) {
@@ -801,479 +828,4 @@ function toSingBox(config) {
                 const key = decodeURIComponent(k.trim());
                 const value = v ? decodeURIComponent(v.trim()) : '';
                 if (key === 'mode') base.plugin_opts.mode = value;
-                else if (key === 'host') base.plugin_opts.host = value;
-                else if (key === 'path') base.plugin_opts.path = value;
-                else if (key === 'tls') base.plugin_opts.tls = value === 'true';
-                else if (key === 'mux') base.plugin_opts.mux = parseInt(value, 10) || 0;
-             } else {
-                if (part === 'tls') base.plugin_opts.tls = true;
-             }
-          }
-       }
-    } else if (config.obfs) {
-        base.plugin = "obfs-local";
-        base.plugin_opts = {
-            mode: config.obfs,
-            host: config.obfsHost || config.host
-        };
-    }
-  }
-
-  return JSON.stringify(base, null, 2);
-}
-
-
-// ================================
-// 🧩 TEMPLATE SYSTEM — Load from files
-// ================================
-
-// Simple in-memory cache for templates
-const templateCache = {};
-
-async function loadTemplateText(format) {
-  if (templateCache[format]) {
-    return templateCache[format];
-  }
-
-  try {
-    const ext = format === 'clash' ? 'yaml' : 'conf';
-    const templatePath = path.join(__dirname, 'templates', `${format}.${ext}`);
-    const content = await fs.readFile(templatePath, 'utf8');
-    templateCache[format] = content;
-    return content;
-  } catch (error) {
-    console.error(`Gagal load template ${format}:`, error.message);
-    throw new Error(`Template ${format} tidak ditemukan`);
-  }
-}
-
-// --- Fungsi Generate Config dengan Template ---
-
-async function generateClashConfig(results) {
-  let template = await loadTemplateText('clash');
-  const validProxies = results.filter(r => !r.error);
-
-  const proxyConfigs = validProxies.map(r => r.formats.clash).join('\n');
-  template = template.replace('# PROXY_PLACEHOLDER', proxyConfigs);
-
-  const proxyNames = validProxies.map(r => `      - "${r.original.name.replace(/"/g, '\\"')}"`).join('\n');
-  template = template.replace('# PROXY_NAMES_PLACEHOLDER', proxyNames);
-
-  return template;
-}
-
-async function generateSurgeConfig(results) {
-  let template = await loadTemplateText('surge');
-  const validProxies = results.filter(r => !r.error);
-
-  const proxyConfigs = validProxies.map(r => r.formats.surge).join('\n');
-  template = template.replace('# PROXY_PLACEHOLDER', proxyConfigs);
-
-  const proxyNames = validProxies.map(r => r.original.name).join(', ');
-  template = template.replace('🚀 PROXY = select, DIRECT', `🚀 PROXY = select, DIRECT, ${proxyNames}`);
-
-  return template;
-}
-
-async function generateQuantumultConfig(results) {
-  let template = await loadTemplateText('quantumult');
-  const validProxies = results.filter(r => !r.error);
-
-  const serverConfigs = validProxies.map(r => r.formats.quantumult).join('\n');
-  template = template.replace('// PROXY_PLACEHOLDER', serverConfigs);
-
-  const serverNames = validProxies.map(r => r.original.name).join(', ');
-  template = template.replace('🚀 PROXY = direct', `🚀 PROXY = direct, ${serverNames}`);
-
-  return template;
-}
-
-// Fungsi khusus untuk Sing-Box
-async function generateSingBoxConfig(results) {
-  const templatePath = path.join(__dirname, 'templates', `singbox.json`);
-  let template;
-  try {
-      template = JSON.parse(await fs.readFile(templatePath, 'utf8'));
-  } catch (e) {
-      console.warn(`Template singbox.json tidak ditemukan, menggunakan template default.`);
-      template = {
-          log: { level: "info", timestamp: true },
-          inbounds: [
-              {
-                  type: "tun",
-                  tag: "tun-in",
-                  interface_name: "tun0",
-                  address: "172.19.0.1/30",
-                  auto_route: true,
-                  strict_route: true,
-                  sniff: true
-              }
-          ],
-          outbounds: [
-              {
-                  type: "selector",
-                  tag: "🚀 PROXY",
-                  outbounds: ["direct"]
-              },
-              {
-                  type: "direct",
-                  tag: "direct"
-              },
-              {
-                  type: "block",
-                  tag: "block"
-              }
-          ]
-      };
-  }
-
-  const validProxies = results
-      .filter(r => !r.error)
-      .map(r => {
-          try {
-              return JSON.parse(r.formats.singbox);
-          } catch (e) {
-              console.error("Gagal parse konfigurasi singbox untuk:", r.link, e.message);
-              return null;
-          }
-      })
-      .filter(p => p !== null);
-
-  if (template.outbounds && Array.isArray(template.outbounds)) {
-      const selectorOutbound = template.outbounds.find(ob => ob.type === 'selector');
-      if (selectorOutbound) {
-          const proxyTags = validProxies.map(p => p.tag);
-          const currentOutbounds = selectorOutbound.outbounds || [];
-          const newOutboundsSet = new Set([...currentOutbounds, ...proxyTags]);
-          selectorOutbound.outbounds = Array.from(newOutboundsSet);
-      } else {
-          template.outbounds.unshift({
-              type: "selector",
-              tag: "🚀 PROXY",
-              outbounds: ["direct", ...validProxies.map(p => p.tag)]
-          });
-      }
-      template.outbounds.push(...validProxies);
-  } else {
-      template.outbounds = [
-          { type: "selector", tag: "🚀 PROXY", outbounds: ["direct", ...validProxies.map(p => p.tag)] },
-          { type: "direct", tag: "direct" },
-          { type: "block", tag: "block" },
-          ...validProxies
-      ];
-  }
-
-  return JSON.stringify(template, null, 2);
-}
-
-
-// ================================
-// 🔄 ENDPOINT CONVERT — SINGLE & BATCH (Deteksi Otomatis Jumlah Akun & Gunakan Template)
-// Diperbaiki: Deteksi otomatis jumlah akun dari parameter 'link', selalu gunakan template, ekstraksi fleksibel
-// ================================
-
-app.get('/convert/:format', async (req, res) => {
-  const format = req.params.format.toLowerCase();
-  const { link } = req.query;
-
-  if (!['clash', 'surge', 'quantumult', 'singbox'].includes(format)) {
-    return res.status(400).send(`Error: Format tidak didukung. Gunakan: clash, surge, quantumult, singbox`);
-  }
-
-  if (!link) {
-    return res.status(400).send(`Error: Parameter 'link' wajib diisi`);
-  }
-
-  try {
-    // --- 1. Deteksi dan Ekstrak Otomatis Link VPN ---
-    const rawInput = link;
-    const linkStartPattern = /(vless:\/\/|vmess:\/\/|trojan:\/\/|ss:\/\/)/g;
-    let match;
-    const potentialLinkStarts = [];
-
-    while ((match = linkStartPattern.exec(rawInput)) !== null) {
-      potentialLinkStarts.push({ type: match[1], index: match.index });
-    }
-
-    if (potentialLinkStarts.length === 0) {
-       return res.status(400).send(`Error: Tidak ditemukan link VPN yang dikenali dalam input.`);
-    }
-
-    const extractedLinks = [];
-    for (let i = 0; i < potentialLinkStarts.length; i++) {
-      const start = potentialLinkStarts[i].index;
-      const end = i < potentialLinkStarts.length - 1 ? potentialLinkStarts[i + 1].index : rawInput.length;
-      const potentialLink = rawInput.substring(start, end).trim();
-
-      if (potentialLink.length > 20 && (potentialLink.includes('@') || potentialLink.includes('#'))) {
-         extractedLinks.push(potentialLink);
-      } else {
-          console.warn(`Potensi link diabaikan karena tidak lulus validasi awal: ${potentialLink.substring(0, 50)}...`);
-      }
-    }
-
-    if (extractedLinks.length === 0) {
-       return res.status(400).send(`Error: Tidak ada link VPN yang valid ditemukan dalam input.`);
-    }
-
-    // --- 2. Proses Konversi untuk Semua Link yang Terdeteksi ---
-    const results = [];
-    for (let i = 0; i < extractedLinks.length; i++) {
-      const singleLink = extractedLinks[i];
-
-      if (!singleLink.startsWith('vless://') && !singleLink.startsWith('vmess://') &&
-          !singleLink.startsWith('trojan://') && !singleLink.startsWith('ss://')) {
-          console.warn(`Link diabaikan (bukan VPN yang dikenali): ${singleLink.substring(0, 50)}...`);
-          results.push({ error: "Bukan link VPN yang dikenali (vless, vmess, trojan, ss)", link: singleLink });
-          continue;
-      }
-
-      try {
-        const parsed = parseAnyLink(singleLink);
-        const originalName = parsed.name || "Proxy Server";
-        // Tambahkan suffix nomor urut dan identifier unik
-        const configName = `${originalName}-${i + 1} [vortexVpn]`;
-
-        const config = {
-          ...parsed,
-          name: configName,
-          network: parsed.network || 'tcp'
-        };
-
-        const formats = {
-          clash: toClash(config),
-          surge: toSurge(config),
-          quantumult: toQuantumult(config),
-          singbox: toSingBox(config)
-        };
-        results.push({ original: config, formats, link: singleLink });
-      } catch (convertError) {
-        console.error(`Gagal konversi link (${singleLink.substring(0, 50)}...):`, convertError.message);
-        results.push({ error: convertError.message, link: singleLink });
-      }
-    }
-
-    // --- 3. Filter hasil dan tentukan response ---
-    const successfulResults = results.filter(r => !r.hasOwnProperty('error'));
-    const failedResults = results.filter(r => r.hasOwnProperty('error'));
-
-    const mimeTypes = {
-      clash: 'text/yaml',
-      surge: 'text/plain',
-      quantumult: 'text/plain',
-      singbox: 'application/json'
-    };
-
-    if (successfulResults.length > 0) {
-        let config = '';
-        switch (format) {
-          case 'clash':
-            config = await generateClashConfig(successfulResults);
-            break;
-          case 'surge':
-            config = await generateSurgeConfig(successfulResults);
-            break;
-          case 'quantumult':
-            config = await generateQuantumultConfig(successfulResults);
-            break;
-          case 'singbox':
-            config = await generateSingBoxConfig(successfulResults);
-            break;
-        }
-
-        res.set('Content-Type', mimeTypes[format]);
-        // Opsional: Tambahkan header informasi
-        res.set('X-Proxies-Processed', successfulResults.length.toString());
-        if (failedResults.length > 0) {
-            res.set('X-Proxies-Failed', failedResults.length.toString());
-        }
-        return res.send(config);
-
-    } else {
-        const errorMessages = failedResults.map(r => `Link: ${r.link}\nError: ${r.error}`).join('\n\n');
-        res.set('Content-Type', 'text/plain');
-        return res.status(400).send(`Semua link gagal dikonversi:\n\n${errorMessages}`);
-    }
-
-  } catch (error) {
-    console.error("Error internal di /convert/:format:", error);
-    res.status(500).send(`Error: Terjadi kesalahan internal server saat memproses permintaan.`);
-  }
-});
-
-// Endpoint untuk konversi batch dengan template lengkap dan DOWNLOAD (tetap ada)
-app.get('/convert/template/:format', async (req, res) => {
-  // ... (logika endpoint ini bisa disesuaikan jika perlu menggunakan ekstraksi fleksibel juga)
-  // Untuk saat ini, kita biarkan seperti sebelumnya untuk kompatibilitas
-  const format = req.params.format;
-  const { links } = req.query;
-
-  if (!['clash', 'surge', 'quantumult', 'singbox'].includes(format)) {
-    return res.status(400).json({ error: "Format tidak didukung. Gunakan: clash, surge, quantumult, singbox" });
-  }
-
-  if (!links) return res.status(400).json({ error: "Parameter 'links' wajib diisi" });
-
-  const linkArray = links.split(',').map(l => l.trim()).filter(l => l.length > 0);
-  if (linkArray.length === 0) return res.status(400).json({ error: "Tidak ada link valid ditemukan" });
-
-  try {
-    const results = [];
-    for (let i = 0; i < linkArray.length; i++) {
-      const link = linkArray[i];
-      try {
-        const parsed = parseAnyLink(link);
-        const originalName = parsed.name || "Proxy Server";
-        const configName = `${originalName}-${i + 1} [vortexVpn]`;
-        const config = {
-          ...parsed,
-          name: configName,
-          network: parsed.network || 'tcp'
-        };
-        const formats = {
-          clash: toClash(config),
-          surge: toSurge(config),
-          quantumult: toQuantumult(config),
-          singbox: toSingBox(config)
-        };
-        results.push({ original: config, formats, link });
-      } catch (error) {
-        results.push({ error: error.message, link });
-      }
-    }
-
-    let config = '';
-    switch (format) {
-      case 'clash': config = await generateClashConfig(results); break;
-      case 'surge': config = await generateSurgeConfig(results); break;
-      case 'quantumult': config = await generateQuantumultConfig(results); break;
-      case 'singbox':
-        config = await generateSingBoxConfig(results);
-        break;
-    }
-
-    const mimeTypes = {
-      clash: 'text/yaml',
-      surge: 'text/plain',
-      quantumult: 'text/plain',
-      singbox: 'application/json'
-    };
-
-    const extensions = {
-      clash: 'yaml',
-      surge: 'conf',
-      quantumult: 'conf',
-      singbox: 'json'
-    };
-
-    res.set('Content-Type', mimeTypes[format]);
-    res.set('Content-Disposition', `attachment; filename="proxies.${extensions[format]}"`);
-    res.send(config);
-  } catch (error) {
-    console.error("Error di /convert/template/:format:", error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Endpoint POST untuk batch convert (opsional) - tetap ada
-app.post('/convert/batch', async (req, res) => {
-  // ... (logika endpoint ini bisa disesuaikan jika perlu menggunakan ekstraksi fleksibel juga)
-  const { format, links } = req.body;
-  if (!Array.isArray(links) || links.length === 0) {
-    return res.status(400).json({ error: "Parameter 'links' harus array dan tidak kosong" });
-  }
-  if (!format || !['clash', 'surge', 'quantumult', 'singbox'].includes(format)) {
-    return res.status(400).json({ error: "Parameter 'format' wajib: clash, surge, quantumult, singbox" });
-  }
-
-  try {
-    const results = [];
-    for (let i = 0; i < links.length; i++) {
-      const link = links[i];
-      try {
-        const parsed = parseAnyLink(link);
-        const originalName = parsed.name || "Proxy Server";
-        const configName = `${originalName}-${i + 1} [vortexVpn]`;
-        const config = {
-          ...parsed,
-          name: configName,
-          network: parsed.network || 'tcp'
-        };
-        const formats = {
-          clash: toClash(config),
-          surge: toSurge(config),
-          quantumult: toQuantumult(config),
-          singbox: toSingBox(config)
-        };
-        results.push({ original: config, formats, link });
-      } catch (error) {
-        results.push({ error: error.message, link });
-      }
-    }
-
-    let config = '';
-    switch (format) {
-      case 'clash': config = await generateClashConfig(results); break;
-      case 'surge': config = await generateSurgeConfig(results); break;
-      case 'quantumult': config = await generateQuantumultConfig(results); break;
-      case 'singbox':
-        config = await generateSingBoxConfig(results);
-        break;
-    }
-
-    const mimeTypes = {
-      clash: 'text/yaml',
-      surge: 'text/plain',
-      quantumult: 'text/plain',
-      singbox: 'application/json'
-    };
-
-    const extensions = {
-      clash: 'yaml',
-      surge: 'conf',
-      quantumult: 'conf',
-      singbox: 'json'
-    };
-
-    res.set('Content-Type', mimeTypes[format]);
-    res.set('Content-Disposition', `attachment; filename="proxies.${extensions[format]}"`);
-    res.send(config);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ✅ Fallback
-app.use('*', (req, res) => {
-  res.status(404).json({
-    success: false,
-    error: 'Endpoint not found. Use /health?proxy=IP:PORT or /convert/:format?link=...',
-  });
-});
-
-// ✅ Graceful Shutdown
-const server = app.listen(PORT, () => {
-  console.log(`✅ Proxy Health Checker + Converter running on port ${PORT}`);
-});
-
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received. Shutting down gracefully...');
-  server.close(() => {
-    console.log('✅ Server closed gracefully.');
-    process.exit(0);
-  });
-});
-
-process.on('SIGINT', () => {
-  console.log('SIGINT received. Shutting down...');
-  server.close(() => {
-    console.log('✅ Server closed.');
-    process.exit(0);
-  });
-});
-
-// ✅ Error Handler (Harus ditempatkan paling bawah)
-app.use((error, req, res, next) => {
-  console.error("Unhandled error:", error.stack);
-  res.status(500).json({ error: 'Something went wrong!' });
-});
+                else if (key === 'h
