@@ -840,7 +840,7 @@ async function generateQuantumultConfig(results) {
 }
 // ================================
 // 🔄 ENDPOINT CONVERT — SINGLE & BATCH (Tampil Langsung, Bukan Download)
-// Diperbaiki: Ketika pakai 'links', hasilnya tetap pakai template, bukan array mentah
+// Diperbaiki: Perilaku berbeda untuk 'link' vs 'links'
 // ================================
 
 app.get('/convert/:format', async (req, res) => {
@@ -852,11 +852,17 @@ app.get('/convert/:format', async (req, res) => {
     return res.status(400).send(`Error: Format tidak didukung. Gunakan: clash, surge, quantumult, singbox`);
   }
 
-  // 2. Siapkan Array Link (prioritaskan 'links' jika ada, fallback ke 'link')
+  // 2. Tentukan jenis permintaan: single atau batch
+  let isBatch = false;
   let linkArray = [];
+
   if (links) {
+    // Jika parameter 'links' ada, ini adalah permintaan batch
+    isBatch = true;
     linkArray = links.split(',').map(l => l.trim()).filter(l => l.length > 0);
   } else if (link) {
+    // Jika hanya parameter 'link' ada, ini adalah permintaan single
+    isBatch = false;
     linkArray = [link.trim()];
   } else {
     return res.status(400).send(`Error: Parameter 'link' atau 'links' wajib diisi`);
@@ -867,7 +873,7 @@ app.get('/convert/:format', async (req, res) => {
   }
 
   try {
-    // 3. Proses Konversi untuk Semua Link
+    // 3. Proses Konversi
     const results = [];
     for (const singleLink of linkArray) {
       try {
@@ -879,21 +885,28 @@ app.get('/convert/:format', async (req, res) => {
         const config = {
           ...parsed,
           name: configName,
-          network: parsed.network || 'tcp'
+          network: parsed.network || 'tcp' // Jika tidak ada, default tcp
         };
 
-        // Generate konfigurasi untuk setiap format
-        const formats = {
-          clash: toClash(config),
-          surge: toSurge(config),
-          quantumult: toQuantumult(config),
-          singbox: toSingBox(config)
-        };
-        results.push({ original: config, formats, link: singleLink });
+        let convertedConfig = '';
+        switch (format) {
+          case 'clash': convertedConfig = toClash(config); break;
+          case 'surge': convertedConfig = toSurge(config); break;
+          case 'quantumult': convertedConfig = toQuantumult(config); break;
+          case 'singbox': convertedConfig = toSingBox(config); break;
+          default: throw new Error(`Format tidak dikenali: ${format}`);
+        }
+        results.push({
+            original_link: singleLink,
+            parsed_config: config,
+            converted: convertedConfig
+        });
       } catch (convertError) {
         console.error(`Gagal konversi link (${singleLink}):`, convertError.message);
-        // Tetap masukkan ke results agar bisa ditampilkan errornya
-        results.push({ error: convertError.message, link: singleLink });
+        results.push({
+            original_link: singleLink,
+            error: convertError.message
+        });
       }
     }
 
@@ -902,86 +915,65 @@ app.get('/convert/:format', async (req, res) => {
       clash: 'text/yaml',
       surge: 'text/plain',
       quantumult: 'text/plain',
-      singbox: 'application/json' // Untuk singbox template, tetap JSON
+      singbox: 'application/json'
     };
 
-    // 5. Hasilkan Output Berdasarkan Hasil Konversi
-    // Cek jika semua link berhasil (tidak ada properti 'error')
+    // 5. Tentukan Respon Berdasarkan Jenis Permintaan dan Hasil
     const allSuccessful = results.every(r => !r.hasOwnProperty('error'));
 
     if (allSuccessful) {
-        // --- Jika Semua Berhasil ---
-        // Gunakan fungsi generate yang memakai template untuk semua format
-        let config = '';
-        switch (format) {
-          case 'clash': config = await generateClashConfig(results); break;
-          case 'surge': config = await generateSurgeConfig(results); break;
-          case 'quantumult': config = await generateQuantumultConfig(results); break;
-          case 'singbox':
-            // Special handling for singbox full config template
-            const templatePath = path.join(__dirname, 'templates', `singbox.json`);
-            let template;
-            try {
-                template = JSON.parse(await fs.readFile(templatePath, 'utf8'));
-            } catch (e) {
-                // Fallback template jika file tidak ditemukan
-                template = { outbounds: [{ tag: "proxy", type: "selector", outbounds: [] }] };
-                console.warn(`Template singbox.json tidak ditemukan, menggunakan template default.`);
-            }
-            // Filter dan parse konfigurasi yang valid
-            const validProxies = results
-                .filter(r => !r.error)
-                .map(r => {
-                    try {
-                        return JSON.parse(r.formats.singbox);
-                    } catch (e) {
-                        console.error("Gagal parse konfigurasi singbox untuk:", r.link, e.message);
-                        return null; // Atau lempar error
-                    }
-                })
-                .filter(p => p !== null); // Hapus yang null
 
-            // Inject ke template
-            if (template.outbounds && template.outbounds[0]) {
-                // Tambahkan tag proxy ke selector
-                template.outbounds[0].outbounds.push(...validProxies.map(p => p.tag));
-                // Tambahkan proxy sebagai outbounds baru
-                template.outbounds.push(...validProxies);
+        if (isBatch) {
+            // --- Jika BATCH (menggunakan parameter 'links') ---
+            // Kembalikan array/list konfigurasi MENTAH (bukan dari template)
+            res.set('Content-Type', mimeTypes[format]);
+
+            if (format === 'singbox') {
+                // Untuk singbox, kembalikan array JSON dari objek konfigurasi
+                const arrayOfConfigs = results.map(r => JSON.parse(r.converted));
+                return res.send(JSON.stringify(arrayOfConfigs, null, 2));
+            } else if (format === 'clash') {
+                // Untuk clash, kembalikan array JSON dari string konfigurasi YAML individu
+                const arrayOfYAMLStrings = results.map(r => r.converted);
+                res.set('Content-Type', 'application/json'); // Ubah ke JSON karena array
+                return res.send(JSON.stringify(arrayOfYAMLStrings, null, 2));
+
             } else {
-                // Jika struktur template tidak sesuai, buat struktur dasar
-                template.outbounds = [
-                    { tag: "proxy", type: "selector", outbounds: validProxies.map(p => p.tag) },
-                    ...validProxies
-                ];
+                // Untuk surge & quantumult, kembalikan array JSON dari string konfigurasi
+                const arrayOfConfigStrings = results.map(r => r.converted);
+                res.set('Content-Type', 'application/json'); // Ubah ke JSON karena array
+                return res.send(JSON.stringify(arrayOfConfigStrings, null, 2));
             }
-            config = JSON.stringify(template, null, 2);
-            break;
+
+        } else {
+            // --- Jika SINGLE (menggunakan parameter 'link') ---
+            // Kembalikan konfigurasi tunggal MENTAH (bukan dari template)
+            res.set('Content-Type', mimeTypes[format]);
+            return res.send(results[0].converted);
         }
 
-        // Set Content-Type dan kirimkan konfigurasi lengkap langsung (bukan download)
-        res.set('Content-Type', mimeTypes[format]);
-        // HAPUS Content-Disposition agar tidak download
-        // res.set('Content-Disposition', 'attachment; filename="proxies.conf"');
-        return res.send(config);
-
     } else {
-        // --- Jika Ada yang Gagal ---
-        // Tampilkan pesan error
-        const errorMessages = results.filter(r => r.error).map(r => `Link: ${r.link}\nError: ${r.error}`).join('\n\n');
-        res.set('Content-Type', 'text/plain');
-        return res.status(400).send(`Beberapa link gagal dikonversi:\n\n${errorMessages}`);
+        // Jika ada yang gagal
+        if (isBatch) {
+             // Untuk batch, tetap tampilkan error dalam format teks
+             const errorMessages = results.filter(r => r.error).map(r => `Link: ${r.original_link}\nError: ${r.error}`).join('\n\n');
+             res.set('Content-Type', 'text/plain');
+             return res.status(400).send(`Beberapa link gagal dikonversi:\n\n${errorMessages}`);
+        } else {
+             // Untuk single, tampilkan error sederhana
+             res.set('Content-Type', 'text/plain');
+             return res.status(400).send(`Gagal konversi link: ${results[0].error}`);
+        }
     }
 
   } catch (error) {
-    // Tangkap error umum
     console.error("Error internal di /convert/:format:", error);
     res.status(500).send(`Error: Terjadi kesalahan internal server saat memproses permintaan.`);
   }
 });
-
       
-    
-
+      
+  
 // Endpoint untuk konversi batch dengan template lengkap dan DOWNLOAD
 app.get('/convert/template/:format', async (req, res) => {
   const format = req.params.format;
