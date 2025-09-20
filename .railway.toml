@@ -1,5 +1,9 @@
 [build]
-builder = "NIXPACKS"
+command = "npm install && node setup-templates.js"
 
 [deploy]
-startCommand = "npm start"
+startCommand = "node server.js"
+
+[env]
+NODE_ENV = "production"
+PORT = "3000"
