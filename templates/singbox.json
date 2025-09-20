@@ -7,11 +7,11 @@
     "servers": [
       {
         "tag": "google-dns",
-        "address": "tls://8.8.8.8"
+        "address": "local"
       },
       {
         "tag": "cloudflare-dns",
-        "address": "https://1.1.1.1/dns-query"
+        "address": "local"
       },
       {
         "tag": "block-dns",
@@ -50,6 +50,14 @@
       "default": "direct"
     },
     {
+      "type": "urltest",
+      "tag": "Best Latency",
+      "outbounds": [],
+      "url": "https://cp.cloudflare.com/generate_204",
+      "interval": "20s"
+      
+    },
+    {
       "type": "direct",
       "tag": "direct"
     },
@@ -81,13 +89,13 @@
         "type": "remote",
         "tag": "geosite-malicious",
         "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-malicious.srs",
-        "download_detour": "direct"
+        "download_detour": "🚀 PROXY"
       },
       {
         "type": "remote",
         "tag": "geoip-malicious",
         "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-malicious.srs",
-        "download_detour": "direct"
+        "download_detour": "🚀 PROXY"
       }
     ],
     "final": "🚀 PROXY"
