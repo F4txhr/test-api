@@ -1,53 +1,45 @@
-// server.js
 const express = require('express');
 const cors = require('cors');
 const fetch = require('node-fetch');
 const net = require('net');
+const helmet = require('helmet');
+const expressSanitizer = require('express-sanitizer');
+const path = require('path');
 
-// --- Perubahan Penting: Impor handler POST ---
-// Sebelumnya hanya mengimpor handleConvertRequest untuk GET
-// Sekarang kita impor kedua handler
-const { handleConvertRequest, handleConvertPostRequest } = require('./converter');
-// --- Akhir Perubahan ---
+// Import handlers
+const { 
+  handleConvertRequest, 
+  handleConvertPostRequest,
+  handleRawRequest,
+  handleRawPostRequest,
+  getTemplateInfo
+} = require('./converter');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // --- Global State ---
-let totalRequests = 0;
-let successCount = 0;
-const startTime = Date.now();
-
-// --- Middleware ---
-app.use(cors());
-// Middleware untuk parsing JSON dan teks biasa dari body request
-app.use(express.json({ limit: '10mb' })); // Naikkan limit jika perlu
-app.use(express.text({ type: 'text/*', limit: '10mb' })); // Untuk teks mentah
-
-// --- Logging Middleware ---
-app.use((req, res, next) => {
-  const now = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
-  console.log(`[${now}] ${req.method} ${req.originalUrl}`);
-  next();
-});
+const stats = {
+  totalRequests: 0,
+  successCount: 0,
+  startTime: Date.now(),
+  lastResetTime: Date.now()
+};
 
 // --- Telegram Alert ---
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-
 async function sendTelegramAlert(message) {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+  if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_CHAT_ID) {
     console.warn("⚠️ Telegram alert disabled — token or chat_id not set");
     return;
   }
 
   try {
-    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+    const url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
     await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        chat_id: TELEGRAM_CHAT_ID,
+        chat_id: process.env.TELEGRAM_CHAT_ID,
         text: `[🚨 PROXY DOWN ALERT]\n${message}`,
         parse_mode: 'Markdown',
       }),
@@ -60,40 +52,60 @@ async function sendTelegramAlert(message) {
 
 // --- TCP Test with Retry ---
 async function testTCPWithRetry(host, port, maxRetries = 2, baseTimeout = 5000) {
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      await new Promise((resolve, reject) => {
-        const socket = net.createConnection(port, host);
-        const timeout = baseTimeout + attempt * 1000;
-        socket.setTimeout(timeout);
+  let socket;
+  try {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        await new Promise((resolve, reject) => {
+          socket = net.createConnection(port, host);
+          const timeout = baseTimeout + attempt * 1000;
+          socket.setTimeout(timeout);
 
-        socket.on('connect', () => {
-          socket.end();
-          resolve();
-        });
+          socket.on('connect', () => {
+            socket.end();
+            resolve();
+          });
 
-        socket.on('error', (err) => {
-          reject(err);
-        });
+          socket.on('error', (err) => {
+            reject(err);
+          });
 
-        socket.on('timeout', () => {
-          socket.destroy();
-          reject(new Error(`Timeout (${timeout}ms)`));
+          socket.on('timeout', () => {
+            socket.destroy();
+            reject(new Error(`Timeout (${timeout}ms)`));
+          });
         });
-      });
-      return { success: true, attempt: attempt + 1, error: null };
-    } catch (err) {
-      if (attempt === maxRetries) {
-        return { success: false, attempt: attempt + 1, error: err.message };
+        return { success: true, attempt: attempt + 1, error: null };
+      } catch (err) {
+        if (socket) socket.destroy();
+        if (attempt === maxRetries) {
+          return { success: false, attempt: attempt + 1, error: err.message };
+        }
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
-      await new Promise(resolve => setTimeout(resolve, 1000));
     }
+  } finally {
+    if (socket) socket.destroy();
   }
 }
 
+// --- Middleware ---
+app.use(helmet());
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.text({ type: 'text/*', limit: '10mb' }));
+app.use(expressSanitizer());
+
+// --- Logging Middleware ---
+app.use((req, res, next) => {
+  const now = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
+  console.log(`[${now}] ${req.method} ${req.originalUrl}`);
+  next();
+});
+
 // --- Endpoint: /health ---
 app.get('/health', async (req, res) => {
-  totalRequests++;
+  stats.totalRequests++;
 
   const { proxy } = req.query;
   if (!proxy) {
@@ -129,7 +141,7 @@ app.get('/health', async (req, res) => {
   const success = result.success;
 
   if (success) {
-    successCount++;
+    stats.successCount++;
   } else {
     const alertMsg = `Proxy DOWN: ${proxy}\nLatency: ${latency}ms\nAttempt: ${result.attempt}\nError: ${result.error}\nTime: ${new Date().toISOString()}`;
     sendTelegramAlert(alertMsg);
@@ -153,24 +165,24 @@ app.get('/health', async (req, res) => {
 
 // --- Endpoint: /stats ---
 app.get('/stats', (req, res) => {
-  const uptimeSeconds = Math.floor((Date.now() - startTime) / 1000);
-  const successRate = totalRequests > 0 ? ((successCount / totalRequests) * 100).toFixed(2) : 0;
+  const uptimeSeconds = Math.floor((Date.now() - stats.startTime) / 1000);
+  const successRate = stats.totalRequests > 0 ? ((stats.successCount / stats.totalRequests) * 100).toFixed(2) : 0;
 
   res.json({
     service: "Vortex-Api",
     uptime_seconds: uptimeSeconds,
-    total_requests: totalRequests,
-    success_count: successCount,
-    failure_count: totalRequests - successCount,
+    total_requests: stats.totalRequests,
+    success_count: stats.successCount,
+    failure_count: stats.totalRequests - stats.successCount,
     success_rate_percent: parseFloat(successRate),
-    start_time: new Date(startTime).toISOString(),
+    start_time: new Date(stats.startTime).toISOString(),
   });
 });
 
 // --- Endpoint: /metrics ---
 app.get('/metrics', (req, res) => {
-  const uptimeSeconds = Math.floor((Date.now() - startTime) / 1000);
-  const failureCount = totalRequests - successCount;
+  const uptimeSeconds = Math.floor((Date.now() - stats.startTime) / 1000);
+  const failureCount = stats.totalRequests - stats.successCount;
 
   const metrics = `
 # HELP vortex_uptime_seconds Service uptime in seconds
@@ -179,11 +191,11 @@ vortex_uptime_seconds ${uptimeSeconds}
 
 # HELP vortex_total_requests Total number of health check requests
 # TYPE vortex_total_requests counter
-vortex_total_requests ${totalRequests}
+vortex_total_requests ${stats.totalRequests}
 
 # HELP vortex_success_count Number of successful proxy checks
 # TYPE vortex_success_count counter
-vortex_success_count ${successCount}
+vortex_success_count ${stats.successCount}
 
 # HELP vortex_failure_count Number of failed proxy checks
 # TYPE vortex_failure_count counter
@@ -191,7 +203,7 @@ vortex_failure_count ${failureCount}
 
 # HELP vortex_success_rate_ratio Success rate (0.0 to 1.0)
 # TYPE vortex_success_rate_ratio gauge
-vortex_success_rate_ratio ${totalRequests > 0 ? (successCount / totalRequests) : 0}
+vortex_success_rate_ratio ${stats.totalRequests > 0 ? (stats.successCount / stats.totalRequests) : 0}
   `.trim();
 
   res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
@@ -202,50 +214,61 @@ vortex_success_rate_ratio ${totalRequests > 0 ? (successCount / totalRequests) :
 app.get('/ping', (req, res) => {
   res.status(200).json({
     status: 'Alive',
-    uptime_seconds: Math.floor((Date.now() - startTime) / 1000),
+    uptime_seconds: Math.floor((Date.now() - stats.startTime) / 1000),
     time_wib: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
   });
 });
 
 // ================================
-// 🔄 ENDPOINT CONVERT — GET & POST
+// 🔄 ENDPOINT CONVERT — DENGAN LEVEL
 // ================================
 
-// --- Endpoint GET (tetap ada untuk kompatibilitas) ---
+// --- Endpoint GET dengan level ---
 app.get('/convert/:format', handleConvertRequest);
 
-// --- Endpoint POST (baru untuk fleksibilitas tinggi) ---
-// Menerima array link dalam body JSON: { "links": ["link1", "link2", ...] }
+// --- Endpoint POST dengan level ---
 app.post('/convert/:format', handleConvertPostRequest);
+
+// --- Endpoint GET raw ---
+app.get('/convert/:format/raw', handleRawRequest);
+
+// --- Endpoint POST raw ---
+app.post('/convert/:format/raw', handleRawPostRequest);
+
+// --- Endpoint template info ---
+app.get('/template-info/:format', getTemplateInfo);
+
+// --- Endpoint reset stats ---
+app.post('/stats/reset', (req, res) => {
+  stats.totalRequests = 0;
+  stats.successCount = 0;
+  stats.lastResetTime = Date.now();
+  res.json({ success: true, message: 'Statistics reset' });
+});
 
 // --- Fallback ---
 app.use('*', (req, res) => {
   res.status(404).json({
     success: false,
-    error: 'Endpoint not found. Use /health?proxy=IP:PORT, /convert/:format?link=..., or POST /convert/:format with { "links": [...] }',
+    error: 'Endpoint not found. Available endpoints: /health, /convert/:format, /convert/:format/raw, /template-info/:format',
   });
 });
 
 // --- Graceful Shutdown ---
 const server = app.listen(PORT, () => {
-  console.log(`✅ Proxy Health Checker + Converter (Server) running on port ${PORT}`);
+  console.log(`✅ VPN Converter Server running on port ${PORT}`);
 });
 
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received. Shutting down gracefully...');
-  server.close(() => {
-    console.log('✅ Server closed gracefully.');
-    process.exit(0);
-  });
-});
+process.on('SIGTERM', gracefulShutdown);
+process.on('SIGINT', gracefulShutdown);
 
-process.on('SIGINT', () => {
-  console.log('SIGINT received. Shutting down...');
+function gracefulShutdown() {
+  console.log('Shutting down gracefully...');
   server.close(() => {
     console.log('✅ Server closed.');
     process.exit(0);
   });
-});
+}
 
 // --- Error Handler ---
 app.use((error, req, res, next) => {
@@ -253,4 +276,4 @@ app.use((error, req, res, next) => {
   res.status(500).json({ error: 'Something went wrong!' });
 });
 
-module.exports = { app }; // Untuk keperluan testing jika diperlukan
+module.exports = { app, server };
