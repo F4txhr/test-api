@@ -44,12 +44,10 @@ async function extractLinks(rawInput) {
 
 // ================================
 // 🔄 PARSER & CONVERTER — VLESS, VMess, Trojan, Shadowsocks (SUPPORT WS!)
-// (Bagian ini tetap SAMA seperti sebelumnya)
 // ================================
 
-// --- Fungsi Parsing tetap sama seperti sebelumnya ---
+// --- Fungsi Parsing Shadowsocks (Diperbaiki untuk Plugin) ---
 function parseSS(link) {
-  // ... (kode parseSS tetap sama)
   if (!link.startsWith('ss://')) {
     throw new Error('Not a Shadowsocks link');
   }
@@ -71,18 +69,23 @@ function parseSS(link) {
     throw new Error('Invalid Shadowsocks base64 encoding');
   }
 
-  let plugin = '';
-  let pluginOpts = '';
+  // --- Perubahan Utama: Jangan pisah plugin string di sini ---
+  // Simpan seluruh string plugin apa adanya
+  let plugin = ''; // Ini akan menyimpan seluruh string plugin dari query string
+  let pluginOpts = ''; // Ini tidak akan digunakan, tapi tetap dibiarkan untuk kompatibilitas
   let obfs = '';
   let obfsHost = '';
+  // --- Akhir Perubahan ---
 
   if (paramParts.length > 0) {
     const params = new URLSearchParams(paramParts.join('?'));
-    plugin = params.get('plugin') || '';
+    // --- Perubahan Utama: Ambil plugin string penuh ---
+    plugin = params.get('plugin') || ''; // Contoh: "v2ray-plugin;tls;mux=0;mode=websocket;..."
+    // --- Akhir Perubahan ---
     if (plugin.includes(';')) {
       const [p, opts] = plugin.split(';', 2);
-      plugin = p;
-      pluginOpts = opts;
+      // plugin = p; // JANGAN TIMPA plugin dengan hanya nama plugin-nya
+      pluginOpts = opts; // Simpan bagian opsinya jika diperlukan untuk hal lain
     }
     obfs = params.get('obfs') || '';
     obfsHost = params.get('obfs-host') || '';
@@ -105,13 +108,14 @@ function parseSS(link) {
     password,
     host,
     port,
-    plugin, // Simpan plugin string utuh
-    pluginOpts, // Simpan pluginOpts jika ada
+    plugin, // <-- Sekarang berisi string plugin lengkap
+    pluginOpts, // <-- Tetap ada, walau tidak digunakan oleh toSingBox
     obfs,
     obfsHost,
     name: name
   };
 }
+// --- Akhir Fungsi Parsing Shadowsocks (Diperbaiki) ---
 
 function parseVLESS(link) {
   // ... (kode parseVLESS tetap sama)
@@ -321,7 +325,6 @@ function parseAnyLink(link) {
 
 // ================================
 // 🎯 CONVERTER — Clash, Surge, Quantumult, Sing-Box
-// (Bagian ini tetap SAMA seperti sebelumnya)
 // ================================
 
 function toClash(config) {
@@ -507,7 +510,12 @@ function toSurge(config) {
       }
       return `${config.name} = trojan, ${config.host}, ${config.port}, password=${config.password}, ${trojanOpts}`;
     case 'ss':
+      // Format Shadowsocks untuk Surge
       if (config.plugin) {
+         // Surge biasanya menggunakan module untuk plugin
+         // Contoh: custom, server, port, cipher, password, module-url
+         // Kita bisa membuat string placeholder atau mencoba memetakan parameter
+         // Ini adalah contoh sederhana
          return `${config.name} = custom, ${config.host}, ${config.port}, ${config.method}, ${config.password}, https://raw.githubusercontent.com/ConnersHua/SSEncrypt/master/SSEncrypt.module`;
       } else {
          return `${config.name} = ss, ${config.host}, ${config.port}, ${config.method}, ${config.password}`;
@@ -560,13 +568,15 @@ function toQuantumult(config) {
     case 'ss':
       let ssParams = `encrypt-method=${config.method}, password=${config.password}`;
       if (config.obfs) ssParams += `, obfs=${config.obfs}, obfs-host=${config.obfsHost}`;
+      // Quantumult juga bisa menggunakan plugin, tapi formatnya berbeda
+      // Kita fokus pada format dasar dulu
       return `shadowsocks=${config.host}:${config.port}, method=${config.method}, password=${config.password}, ${ssParams}, tag=${config.name}`;
     default:
       throw new Error(`Unsupported type for Quantumult: ${config.type}`);
   }
 }
 
-// --- Fungsi toSingBox dengan Log Debugging (TERUTAMA PLUGIN SS) ---
+// --- Fungsi toSingBox dengan Log Debugging (TERMASUK PLUGIN SS YANG DIPERBAIKI) ---
 function toSingBox(config) {
   // --- Tambahkan log ini untuk debugging ---
   console.log("--- DEBUG: Memulai toSingBox untuk config ---");
@@ -748,6 +758,7 @@ async function loadTemplateText(format) {
     const ext = format === 'clash' ? 'yaml' : 'conf';
     const templatePath = path.join(__dirname, 'templates', `${format}.${ext}`);
     const content = await fs.readFile(templatePath, 'utf8');
+    // Store in cache
     templateCache[format] = content;
     return content;
   } catch (error) {
