@@ -3,7 +3,6 @@ const cors = require('cors');
 const fetch = require('node-fetch');
 const net = require('net');
 const helmet = require('helmet');
-const expressSanitizer = require('express-sanitizer');
 const path = require('path');
 
 // Import handlers
@@ -94,7 +93,6 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.text({ type: 'text/*', limit: '10mb' }));
-app.use(expressSanitizer());
 
 // --- Logging Middleware ---
 app.use((req, res, next) => {

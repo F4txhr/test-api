@@ -2,6 +2,7 @@ const fs = require('fs').promises;
 const path = require('path');
 const Handlebars = require('handlebars');
 const NodeCache = require('node-cache');
+const yaml = require('js-yaml');
 
 // --- Template System ---
 class TemplateSystem {
@@ -45,21 +46,33 @@ class TemplateSystem {
       return this.cache.get(cacheKey);
     }
 
+    const extensionMap = {
+      clash: 'yaml.hbs',
+      singbox: 'json.hbs',
+      surge: 'ini.hbs',
+      quantumult: 'ini.hbs',
+    };
+    const extension = extensionMap[format] || 'hbs';
+    const templateName = `${level}.${extension}`;
+
     try {
-      const templatePath = path.join(this.templatesDir, format, `${level}.hbs`);
+      const templatePath = path.join(this.templatesDir, format, templateName);
       const source = await fs.readFile(templatePath, 'utf8');
       const template = Handlebars.compile(source);
       
       this.cache.set(cacheKey, template);
       return template;
     } catch (error) {
-      console.error(`❌ Failed to load template ${format}:${level}:`, error);
-      // Fallback to basic level
+      console.error(`❌ Failed to load template ${format}:${level} (tried ${templateName}):`, error.message);
+
+      // Fallback to basic level only if the requested level was not 'basic'
       if (level !== 'basic') {
         console.log(`🔄 Falling back to basic template for ${format}`);
         return this.loadTemplate(format, 'basic');
       }
-      throw error;
+
+      // If even 'basic' fails, throw the original error
+      throw new Error(`Template for ${format} at level ${level} could not be loaded. Original error: ${error.message}`);
     }
   }
 
@@ -346,151 +359,110 @@ function parseAnyLink(link) {
 
 // --- Fungsi Konversi ---
 function toClash(config) {
+  const clashConfig = {
+    name: config.name,
+    type: config.type,
+    server: config.host,
+    port: config.port,
+    udp: true,
+    'skip-cert-verify': !!config.allowInsecure,
+  };
+
   switch (config.type) {
     case 'vless':
-      let vlessConfig = `- name: "${config.name.replace(/"/g, '\\"')}"`
-          + `\n  type: vless`
-          + `\n  server: ${config.host}`
-          + `\n  port: ${config.port}`
-          + `\n  uuid: ${config.uuid}`
-          + `\n  udp: true`
-          + `\n  skip-cert-verify: ${!!config.allowInsecure}`
-          ;
-      
-      if (config.security === 'tls' || config.security === 'reality') {
-        vlessConfig += `\n  tls: true`;
-        if(config.sni) vlessConfig += `\n  servername: ${config.sni}`;
-        if(config.alpn) vlessConfig += `\n  alpn: [${config.alpn.split(',').map(a => `"${a.trim()}"`).join(', ')}]`;
-        if(config.fp) vlessConfig += `\n  fingerprint: ${config.fp}`;
-        
-        if (config.security === 'reality') {
-          vlessConfig += `\n  client-fingerprint: ${config.fp}`;
-          if(config.pbk) vlessConfig += `\n  public-key: ${config.pbk}`;
-          if(config.sid) vlessConfig += `\n  short-id: ${config.sid}`;
-          if(config.spx) vlessConfig += `\n  spider-x: ${config.spx}`;
-        } else if (config.security === 'tls') {
-          if (config.flow) vlessConfig += `\n  flow: ${config.flow}`;
-        }
-      } else {
-        vlessConfig += `\n  tls: false`;
-      }
+      clashConfig.uuid = config.uuid;
+      clashConfig.tls = config.security === 'tls' || config.security === 'reality';
+      if (clashConfig.tls) {
+        if (config.sni) clashConfig.servername = config.sni;
+        if (config.alpn) clashConfig.alpn = config.alpn.split(',').map(a => a.trim());
+        if (config.fp) clashConfig.fingerprint = config.fp;
 
-      if (config.network === 'ws') {
-        vlessConfig += `\n  network: ws`;
-        vlessConfig += `\n  ws-path: ${config.path || '/'}`;
-        if (config.host_header) {
-          vlessConfig += `\n  ws-headers:`
-              + `\n    host: ${config.host_header}`;
+        if (config.security === 'reality') {
+          clashConfig['client-fingerprint'] = config.fp;
+          if (config.pbk) clashConfig['public-key'] = config.pbk;
+          if (config.sid) clashConfig['short-id'] = config.sid;
+          if (config.spx) clashConfig['spider-x'] = config.spx;
+        } else if (config.security === 'tls') {
+          if (config.flow) clashConfig.flow = config.flow;
         }
       }
-      return vlessConfig;
+      if (config.network === 'ws') {
+        clashConfig.network = 'ws';
+        clashConfig['ws-path'] = config.path || '/';
+        if (config.host_header) {
+          clashConfig['ws-headers'] = { host: config.host_header };
+        }
+      }
+      break;
 
     case 'vmess':
-      let vmessConfig = `- name: "${config.name.replace(/"/g, '\\"')}"`
-          + `\n  type: vmess`
-          + `\n  server: ${config.host}`
-          + `\n  port: ${config.port}`
-          + `\n  uuid: ${config.uuid}`
-          + `\n  alterId: ${config.alterId}`
-          + `\n  cipher: ${config.security}`
-          + `\n  udp: true`
-          + `\n  skip-cert-verify: ${!!config.allowInsecure}`
-          ;
-      
-      if (config.tls) {
-        vmessConfig += `\n  tls: true`;
-        if(config.sni) vmessConfig += `\n  servername: ${config.sni}`;
-        if(config.alpn) vmessConfig += `\n  alpn: [${config.alpn.split(',').map(a => `"${a.trim()}"`).join(', ')}]`;
-        if(config.fp) vmessConfig += `\n  fingerprint: ${config.fp}`;
-      } else {
-        vmessConfig += `\n  tls: false`;
+      clashConfig.uuid = config.uuid;
+      clashConfig.alterId = config.alterId;
+      clashConfig.cipher = config.security;
+      clashConfig.tls = !!config.tls;
+      if (clashConfig.tls) {
+        if (config.sni) clashConfig.servername = config.sni;
+        if (config.alpn) clashConfig.alpn = config.alpn.split(',').map(a => a.trim());
+        if (config.fp) clashConfig.fingerprint = config.fp;
       }
-
       if (config.network === 'ws') {
-        vmessConfig += `\n  network: ws`;
-        vmessConfig += `\n  ws-path: ${config.path || '/'}`;
+        clashConfig.network = 'ws';
+        clashConfig['ws-path'] = config.path || '/';
         if (config.host_header) {
-          vmessConfig += `\n  ws-headers:`
-              + `\n    host: ${config.host_header}`;
+          clashConfig['ws-headers'] = { host: config.host_header };
         }
       }
-
-      return vmessConfig;
+      break;
 
     case 'trojan':
-      let trojanConfig = `- name: "${config.name.replace(/"/g, '\\"')}"`
-          + `\n  type: trojan`
-          + `\n  server: ${config.host}`
-          + `\n  port: ${config.port}`
-          + `\n  password: ${config.password}`
-          + `\n  udp: true`
-          + `\n  skip-cert-verify: ${!!config.allowInsecure}`
-          + `\n  tls: true`
-          ;
-      
-      if(config.sni) trojanConfig += `\n  sni: ${config.sni}`;
-      if(config.alpn) trojanConfig += `\n  alpn: [${config.alpn.split(',').map(a => `"${a.trim()}"`).join(', ')}]`;
-      if(config.fp) trojanConfig += `\n  fingerprint: ${config.fp}`;
-
+      clashConfig.password = config.password;
+      clashConfig.tls = true;
+      if (config.sni) clashConfig.sni = config.sni;
+      if (config.alpn) clashConfig.alpn = config.alpn.split(',').map(a => a.trim());
+      if (config.fp) clashConfig.fingerprint = config.fp;
       if (config.network === 'ws') {
-        trojanConfig += `\n  network: ws`;
-        trojanConfig += `\n  ws-path: ${config.path || '/'}`;
+        clashConfig.network = 'ws';
+        clashConfig['ws-path'] = config.path || '/';
         if (config.host_header) {
-          trojanConfig += `\n  ws-headers:`
-              + `\n    host: ${config.host_header}`;
+          clashConfig['ws-headers'] = { host: config.host_header };
         }
       }
-
-      return trojanConfig;
+      break;
 
     case 'ss':
-      let ssConfig = `- name: "${config.name.replace(/"/g, '\\"')}"`
-          + `\n  type: ss`
-          + `\n  server: ${config.host}`
-          + `\n  port: ${config.port}`
-          + `\n  cipher: ${config.method}`
-          + `\n  password: ${config.password}`
-          + `\n  udp: true`
-          ;
-      
+      clashConfig.cipher = config.method;
+      clashConfig.password = config.password;
       if (config.plugin) {
-        ssConfig += `\n  plugin: ${config.plugin}`;
+        clashConfig.plugin = config.plugin;
         if (config.plugin.includes('v2ray-plugin') || config.plugin.includes('obfs')) {
-          const opts = {};
-          if (config.plugin.includes(';')) {
-            const parts = config.plugin.split(';');
-            for (let i = 1; i < parts.length; i++) {
-              const [k, v] = parts[i].split('=');
-              if (k) opts[decodeURIComponent(k.trim())] = v ? decodeURIComponent(v.trim()) : true;
+            const opts = {};
+            if (config.plugin.includes(';')) {
+                const parts = config.plugin.split(';');
+                for (let i = 1; i < parts.length; i++) {
+                    const [k, v] = parts[i].split('=');
+                    if (k) opts[decodeURIComponent(k.trim())] = v ? decodeURIComponent(v.trim()) : true;
+                }
             }
-          }
-          if (Object.keys(opts).length > 0) {
-            ssConfig += `\n  plugin-opts:`;
-            for (const [k, v] of Object.entries(opts)) {
-              if (k === 'mode' || k === 'host' || k === 'path') {
-                ssConfig += `\n    ${k}: ${v}`;
-              } else if (k === 'tls') {
-                ssConfig += `\n    ${k}: ${v === 'true' || v === true}`;
-              } else if (k === 'mux') {
-                ssConfig += `\n    ${k}: ${parseInt(v, 10) || 0}`;
-              } else {
-                ssConfig += `\n    ${k}: ${v}`;
-              }
+            if (Object.keys(opts).length > 0) {
+                clashConfig['plugin-opts'] = opts;
+            } else if (config.obfs) {
+                clashConfig['plugin-opts'] = {
+                    mode: config.obfs,
+                    host: config.obfsHost
+                };
             }
-          } else if (config.obfs) {
-            ssConfig += `\n  plugin-opts:`
-                + `\n    mode: ${config.obfs}`;
-            if (config.obfsHost) ssConfig += `\n    host: ${config.obfsHost}`;
-          }
-        } else {
-          ssConfig += `\n  plugin-opts: {}`;
         }
       }
-      return ssConfig;
+      break;
 
     default:
       throw new Error(`Tidak dapat mengkonversi protokol '${config.type}' ke format Clash.`);
   }
+
+  // Use yaml.dump to convert the object to a YAML string.
+  // The output from dump includes a trailing newline, which is what we want.
+  // We pass an array with the single config object to ensure it starts with '- '.
+  return yaml.dump([clashConfig], { indent: 2 }).trim();
 }
 
 function toSurge(config) {
@@ -756,198 +728,118 @@ async function processLinks(links, startIndex = 0) {
   return results;
 }
 
+// --- Generic Handler Functions ---
+async function handleGenericConvertRequest(req, res, getLinks) {
+  const format = req.params.format.toLowerCase();
+  const level = req.query.level || req.body.level || 'standard';
+
+  if (!['clash', 'surge', 'quantumult', 'singbox'].includes(format)) {
+    return res.status(400).json({ 
+      error: 'Format tidak didukung. Gunakan: clash, surge, quantumult, singbox' 
+    });
+  }
+
+  try {
+    const links = await getLinks(req);
+    if (!links || (Array.isArray(links) && links.length === 0)) {
+        return res.status(400).json({ error: 'Input link tidak valid atau kosong.' });
+    }
+
+    const results = await processLinks(links);
+    const successfulResults = results.filter(r => !r.error);
+
+    if (successfulResults.length > 0) {
+      const config = await generateConfigByFormat(format, level, successfulResults);
+      
+      const mimeTypes = {
+        clash: 'text/yaml',
+        surge: 'text/plain',
+        quantumult: 'text/plain',
+        singbox: 'application/json'
+      };
+
+      res.set('Content-Type', mimeTypes[format]);
+      res.set('X-Template-Level', level);
+      res.set('X-Proxies-Processed', successfulResults.length.toString());
+      res.send(config);
+    } else {
+      const errorMessages = results
+        .filter(r => r.error)
+        .map(r => `Link: ${r.link}\nError: ${r.error}`)
+        .join('\n\n');
+      
+      res.status(400).send(`Semua link gagal dikonversi:\n\n${errorMessages}`);
+    }
+  } catch (error) {
+    console.error(`Error in handleGenericConvertRequest for ${req.method}:`, error);
+    res.status(500).json({ error: error.message });
+  }
+}
+
+async function handleGenericRawRequest(req, res, getLinks) {
+    const format = req.params.format.toLowerCase();
+
+    if (!['clash', 'surge', 'quantumult', 'singbox'].includes(format)) {
+        return res.status(400).json({
+            error: 'Format tidak didukung. Gunakan: clash, surge, quantumult, singbox'
+        });
+    }
+
+    try {
+        const links = await getLinks(req);
+        if (!links || (Array.isArray(links) && links.length === 0)) {
+            return res.status(400).json({ error: 'Input link tidak valid atau kosong.' });
+        }
+
+        const results = await processLinks(links);
+        const successfulResults = results.filter(r => !r.error);
+
+        if (successfulResults.length > 0) {
+            const structuredOutput = {
+                tags: successfulResults.map(r => r.tag),
+                [format === 'singbox' ? 'outbounds' : 'proxies']: successfulResults.map(r => {
+                    if (format === 'singbox') {
+                        return JSON.parse(r.formats.singbox);
+                    } else {
+                        return parseProxyConfig(r.formats[format]);
+                    }
+                })
+            };
+
+            res.set('Content-Type', 'application/json');
+            res.set('X-Outbounds-Count', successfulResults.length.toString());
+            res.json(structuredOutput);
+        } else {
+            const errorMessages = results
+                .filter(r => r.error)
+                .map(r => `Link: ${r.link}\nError: ${r.error}`)
+                .join('\n\n');
+
+            res.status(400).send(`Semua link gagal dikonversi:\n\n${errorMessages}`);
+        }
+    } catch (error) {
+        console.error(`Error in handleGenericRawRequest for ${req.method}:`, error);
+        res.status(500).json({ error: error.message });
+    }
+}
+
 // --- Handler Functions ---
-async function handleConvertRequest(req, res) {
-  const format = req.params.format.toLowerCase();
-  const { link, level = 'standard' } = req.query;
+const getLinksFromQuery = async (req) => {
+    const { link } = req.query;
+    if (!link) return [];
+    return await extractLinks(link);
+};
 
-  if (!['clash', 'surge', 'quantumult', 'singbox'].includes(format)) {
-    return res.status(400).json({ 
-      error: 'Format tidak didukung. Gunakan: clash, surge, quantumult, singbox' 
-    });
-  }
+const getLinksFromBody = async (req) => {
+    const { links } = req.body;
+    if (!links || !Array.isArray(links)) return [];
+    return links;
+};
 
-  if (!link) {
-    return res.status(400).json({ error: 'Parameter "link" wajib diisi' });
-  }
-
-  try {
-    const extractedLinks = await extractLinks(link);
-    const results = await processLinks(extractedLinks);
-    const successfulResults = results.filter(r => !r.error);
-
-    if (successfulResults.length > 0) {
-      const config = await generateConfigByFormat(format, level, successfulResults);
-      
-      const mimeTypes = {
-        clash: 'text/yaml',
-        surge: 'text/plain',
-        quantumult: 'text/plain',
-        singbox: 'application/json'
-      };
-
-      res.set('Content-Type', mimeTypes[format]);
-      res.set('X-Template-Level', level);
-      res.set('X-Proxies-Processed', successfulResults.length.toString());
-      res.send(config);
-    } else {
-      const errorMessages = results
-        .filter(r => r.error)
-        .map(r => `Link: ${r.link}\nError: ${r.error}`)
-        .join('\n\n');
-      
-      res.status(400).send(`Semua link gagal dikonversi:\n\n${errorMessages}`);
-    }
-  } catch (error) {
-    console.error("Error in handleConvertRequest:", error);
-    res.status(500).json({ error: error.message });
-  }
-}
-
-async function handleConvertPostRequest(req, res) {
-  const format = req.params.format?.toLowerCase();
-  const { links, level = 'standard' } = req.body;
-
-  if (!format || !['clash', 'surge', 'quantumult', 'singbox'].includes(format)) {
-    return res.status(400).json({ 
-      error: 'Format tidak didukung. Gunakan: clash, surge, quantumult, singbox' 
-    });
-  }
-
-  if (!links || !Array.isArray(links) || links.length === 0) {
-    return res.status(400).json({ 
-      error: 'Body permintaan harus berisi array "links" yang tidak kosong' 
-    });
-  }
-
-  try {
-    const results = await processLinks(links);
-    const successfulResults = results.filter(r => !r.error);
-
-    if (successfulResults.length > 0) {
-      const config = await generateConfigByFormat(format, level, successfulResults);
-      
-      const mimeTypes = {
-        clash: 'text/yaml',
-        surge: 'text/plain',
-        quantumult: 'text/plain',
-        singbox: 'application/json'
-      };
-
-      res.set('Content-Type', mimeTypes[format]);
-      res.set('X-Template-Level', level);
-      res.set('X-Proxies-Processed', successfulResults.length.toString());
-      res.send(config);
-    } else {
-      const errorMessages = results
-        .filter(r => r.error)
-        .map(r => `Link: ${r.link}\nError: ${r.error}`)
-        .join('\n\n');
-      
-      res.status(400).send(`Semua link gagal dikonversi:\n\n${errorMessages}`);
-    }
-  } catch (error) {
-    console.error("Error in handleConvertPostRequest:", error);
-    res.status(500).json({ error: error.message });
-  }
-}
-
-async function handleRawRequest(req, res) {
-  const format = req.params.format.toLowerCase();
-  const { link } = req.query;
-
-  if (!['clash', 'surge', 'quantumult', 'singbox'].includes(format)) {
-    return res.status(400).json({ 
-      error: 'Format tidak didukung. Gunakan: clash, surge, quantumult, singbox' 
-    });
-  }
-
-  if (!link) {
-    return res.status(400).json({ error: 'Parameter "link" wajib diisi' });
-  }
-
-  try {
-    const extractedLinks = await extractLinks(link);
-    const results = await processLinks(extractedLinks);
-    const successfulResults = results.filter(r => !r.error);
-
-    if (successfulResults.length > 0) {
-      const structuredOutput = {
-        tags: successfulResults.map(r => r.tag),
-        [format === 'singbox' ? 'outbounds' : 'proxies']: successfulResults.map(r => {
-          if (format === 'singbox') {
-            return JSON.parse(r.formats.singbox);
-          } else {
-            return parseProxyConfig(r.formats[format]);
-          }
-        })
-      };
-
-      res.set('Content-Type', 'application/json');
-      res.set('X-Outbounds-Count', successfulResults.length.toString());
-      res.json(structuredOutput);
-    } else {
-      const errorMessages = results
-        .filter(r => r.error)
-        .map(r => `Link: ${r.link}\nError: ${r.error}`)
-        .join('\n\n');
-      
-      res.status(400).send(`Semua link gagal dikonversi:\n\n${errorMessages}`);
-    }
-  } catch (error) {
-    console.error("Error in handleRawRequest:", error);
-    res.status(500).json({ error: error.message });
-  }
-}
-
-async function handleRawPostRequest(req, res) {
-  const format = req.params.format?.toLowerCase();
-  const { links } = req.body;
-
-  if (!format || !['clash', 'surge', 'quantumult', 'singbox'].includes(format)) {
-    return res.status(400).json({ 
-      error: 'Format tidak didukung. Gunakan: clash, surge, quantumult, singbox' 
-    });
-  }
-
-  if (!links || !Array.isArray(links) || links.length === 0) {
-    return res.status(400).json({ 
-      error: 'Body permintaan harus berisi array "links" yang tidak kosong' 
-    });
-  }
-
-  try {
-    const results = await processLinks(links);
-    const successfulResults = results.filter(r => !r.error);
-
-    if (successfulResults.length > 0) {
-      const structuredOutput = {
-        tags: successfulResults.map(r => r.tag),
-        [format === 'singbox' ? 'outbounds' : 'proxies']: successfulResults.map(r => {
-          if (format === 'singbox') {
-            return JSON.parse(r.formats.singbox);
-          } else {
-            return parseProxyConfig(r.formats[format]);
-          }
-        })
-      };
-
-      res.set('Content-Type', 'application/json');
-      res.set('X-Outbounds-Count', successfulResults.length.toString());
-      res.json(structuredOutput);
-    } else {
-      const errorMessages = results
-        .filter(r => r.error)
-        .map(r => `Link: ${r.link}\nError: ${r.error}`)
-        .join('\n\n');
-      
-      res.status(400).send(`Semua link gagal dikonversi:\n\n${errorMessages}`);
-    }
-  } catch (error) {
-    console.error("Error in handleRawPostRequest:", error);
-    res.status(500).json({ error: error.message });
-  }
-}
+const handleConvertRequest = (req, res) => handleGenericConvertRequest(req, res, getLinksFromQuery);
+const handleConvertPostRequest = (req, res) => handleGenericConvertRequest(req, res, getLinksFromBody);
+const handleRawRequest = (req, res) => handleGenericRawRequest(req, res, getLinksFromQuery);
+const handleRawPostRequest = (req, res) => handleGenericRawRequest(req, res, getLinksFromBody);
 
 function getTemplateInfo(req, res) {
   const format = req.params.format.toLowerCase();
