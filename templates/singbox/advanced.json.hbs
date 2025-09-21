@@ -34,7 +34,7 @@
       "tag": "dns-out"
     },
     {{#each outbounds}}
-    {{{json this}}}{{#unless @last}},{{/unless}}
+    {{{json this}}},
     {{/each}}
     {
       "type": "selector",

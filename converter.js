@@ -439,23 +439,30 @@ function toClash(config) {
       clashConfig.password = config.password;
       if (config.plugin) {
         clashConfig.plugin = config.plugin;
-        if (config.plugin.includes('v2ray-plugin') || config.plugin.includes('obfs')) {
-            const opts = {};
-            if (config.plugin.includes(';')) {
-                const parts = config.plugin.split(';');
-                for (let i = 1; i < parts.length; i++) {
-                    const [k, v] = parts[i].split('=');
-                    if (k) opts[decodeURIComponent(k.trim())] = v ? decodeURIComponent(v.trim()) : true;
+
+        const opts = {};
+        if (config.plugin_opts) {
+            config.plugin_opts.split(';').forEach(part => {
+                if (part) {
+                    const [key, ...valParts] = part.split('=');
+                    const value = valParts.join('=');
+                    if (key === 'tls') {
+                        opts[key] = true;
+                    } else if (value) {
+                        opts[key] = value;
+                    }
                 }
-            }
-            if (Object.keys(opts).length > 0) {
-                clashConfig['plugin-opts'] = opts;
-            } else if (config.obfs) {
-                clashConfig['plugin-opts'] = {
-                    mode: config.obfs,
-                    host: config.obfsHost
-                };
-            }
+            });
+        }
+
+        if (Object.keys(opts).length > 0) {
+            clashConfig['plugin-opts'] = opts;
+        } else if (config.obfs) {
+            // Fallback for simple-obfs
+            clashConfig['plugin-opts'] = {
+                mode: config.obfs,
+                host: config.obfsHost
+            };
         }
       }
       break;
