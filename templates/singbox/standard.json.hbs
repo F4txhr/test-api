@@ -30,7 +30,7 @@
       "tag": "block"
     },
     {{#each outbounds}}
-    {{this}},
+    {{{json this}}}{{#unless @last}},{{/unless}}
     {{/each}}
     {
       "type": "selector",
