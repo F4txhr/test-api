@@ -284,7 +284,10 @@ function parseSS(link) {
     throw new Error('Not a Shadowsocks link');
   }
 
-  const clean = link.replace('ss://', '').split('#')[0];
+  const fragmentIndex = link.indexOf('#');
+  const fragment = fragmentIndex !== -1 ? link.substring(fragmentIndex + 1) : '';
+  const clean = link.substring(0, fragmentIndex !== -1 ? fragmentIndex : link.length).replace('ss://', '');
+
   const [userinfo, hostport] = clean.split('@');
   const [host, portWithParams] = hostport.split(':');
   const [portPart, ...paramParts] = portWithParams.split('?');
@@ -302,28 +305,29 @@ function parseSS(link) {
   }
 
   let plugin = '';
+  let plugin_opts = '';
   let obfs = '';
   let obfsHost = '';
 
   if (paramParts.length > 0) {
     const params = new URLSearchParams(paramParts.join('?'));
-    plugin = params.get('plugin') || '';
-    
-    if (plugin.includes(';')) {
-      const [p, opts] = plugin.split(';', 2);
-      plugin = p;
+    const rawPlugin = params.get('plugin') || '';
+    if (rawPlugin) {
+      const parts = rawPlugin.split(';');
+      plugin = parts[0];
+      plugin_opts = parts.slice(1).join(';');
     }
     obfs = params.get('obfs') || '';
     obfsHost = params.get('obfs-host') || '';
   }
 
   let name = 'SS Server';
-  if (link.includes('#')) {
+  if (fragment) {
     try {
-      name = decodeURIComponent(link.split('#')[1]);
+      name = decodeURIComponent(fragment);
     } catch (e) {
       console.warn("Gagal decode fragment untuk SS link:", e.message);
-      name = link.split('#')[1] || name;
+      name = fragment;
     }
   }
 
@@ -334,6 +338,7 @@ function parseSS(link) {
     host,
     port,
     plugin,
+    plugin_opts,
     obfs,
     obfsHost,
     name: name
@@ -648,8 +653,10 @@ function toSingBox(config) {
       base.password = config.password;
 
       if (config.plugin) {
-          base.plugin = "v2ray-plugin";
-          base.plugin_opts = config.plugin;
+          base.plugin = config.plugin;
+          if (config.plugin_opts) {
+            base.plugin_opts = config.plugin_opts;
+          }
       }
   }
 
