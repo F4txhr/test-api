@@ -13,6 +13,10 @@ const {
   handleRawPostRequest,
   getTemplateInfo
 } = require('./converter');
+const { initializeDatabase } = require('./database');
+
+// --- Database Initialization ---
+initializeDatabase();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -216,6 +220,18 @@ app.get('/ping', (req, res) => {
     time_wib: new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })
   });
 });
+
+// ================================
+// 📊 ENDPOINT CLOUDFLARE STATS
+// ================================
+const { handleRegistration, handleDataRequest } = require('./cloudflare');
+
+// --- Endpoint POST untuk registrasi ---
+app.post('/statscf', handleRegistration);
+
+// --- Endpoint GET untuk mengambil data ---
+app.get('/statscf/data/:id', handleDataRequest);
+
 
 // ================================
 // 🔄 ENDPOINT CONVERT — DENGAN LEVEL
