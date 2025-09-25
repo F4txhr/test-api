@@ -19,7 +19,7 @@
     "js-yaml": "^4.1.0",
     "node-cache": "^5.1.2",
     "node-fetch": "^2.6.7",
-    "uuid": "^13.0.0"
+    "uuid": "^8.3.2"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
