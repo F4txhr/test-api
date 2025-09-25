@@ -36,7 +36,7 @@ async function verifyCloudflareCredentials(api_token, account_id, { zone_id, wor
     }
   } else if (worker_name) {
     // GraphQL query for Worker verification (less likely to be blocked)
-    const query = `query { viewer { accounts(filter: {accountTag: "${account_id}"}) { workersScripts(filter: {scriptName: "${worker_name}"}) { scriptName } } } }`;
+    const query = `query { viewer { accounts(filter: {accountTag: "${account_id}"}) { workerScripts(filter: {scriptName: "${worker_name}"}) { scriptName } } } }`;
     try {
       const response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
         method: 'POST',
