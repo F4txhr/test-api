@@ -2,6 +2,8 @@ const fetch = require('node-fetch');
 const { v4: uuidv4 } = require('uuid');
 const { addCloudflareConfig, getCloudflareConfig } = require('./database');
 
+const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36';
+
 // --- Cloudflare API Verification ---
 async function verifyCloudflareCredentials(api_token, account_id, { zone_id, worker_name }) {
   if (zone_id) {
@@ -10,7 +12,11 @@ async function verifyCloudflareCredentials(api_token, account_id, { zone_id, wor
     try {
       const response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${api_token}` },
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${api_token}`,
+          'User-Agent': BROWSER_USER_AGENT
+        },
         body: JSON.stringify({ query }),
       });
       const data = await response.json();
@@ -33,7 +39,10 @@ async function verifyCloudflareCredentials(api_token, account_id, { zone_id, wor
     const url = `https://api.cloudflare.com/client/v4/accounts/${account_id}/workers/scripts/${worker_name}`;
     try {
       const response = await fetch(url, {
-        headers: { 'Authorization': `Bearer ${api_token}` }
+        headers: {
+          'Authorization': `Bearer ${api_token}`,
+          'User-Agent': BROWSER_USER_AGENT
+        }
       });
       const data = await response.json();
       if (response.ok && data.success) {
@@ -115,7 +124,7 @@ function getWorkerAnalyticsQuery(account_id, worker_name, since, until) {
           workersInvocationsAdaptive(
             filter: {
               datetime_geq: "${since}T00:00:00Z",
-              datetime_lt: "${until}T00:00:00Z",
+              datetime_lt: "${until}T23:59:59Z",
               scriptName: "${worker_name}"
             },
             limit: 1
@@ -158,7 +167,11 @@ async function handleDataRequest(req, res) {
   try {
     const response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.cf_api_token}` },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.cf_api_token}`,
+        'User-Agent': BROWSER_USER_AGENT
+      },
       body: JSON.stringify({ query }),
     });
 
