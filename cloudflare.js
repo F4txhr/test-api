@@ -35,25 +35,32 @@ async function verifyCloudflareCredentials(api_token, account_id, { zone_id, wor
       return { success: false, error: 'Failed to connect to Cloudflare API for zone verification.' };
     }
   } else if (worker_name) {
-    // REST API call for Worker verification
-    const url = `https://api.cloudflare.com/client/v4/accounts/${account_id}/workers/scripts/${worker_name}`;
+    // GraphQL query for Worker verification (less likely to be blocked)
+    const query = `query { viewer { accounts(filter: {accountTag: "${account_id}"}) { workersScripts(filter: {scriptName: "${worker_name}"}) { scriptName } } } }`;
     try {
-      const response = await fetch(url, {
+      const response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
+        method: 'POST',
         headers: {
+          'Content-Type': 'application/json',
           'Authorization': `Bearer ${api_token}`,
           'User-Agent': BROWSER_USER_AGENT
-        }
+        },
+        body: JSON.stringify({ query }),
       });
       const data = await response.json();
-      if (response.ok && data.success) {
+      if (data.errors) {
+        console.error('Cloudflare GraphQL Error:', data.errors);
+        return { success: false, error: 'Invalid credentials or permissions for Worker (GraphQL).' };
+      }
+      const scripts = data.data?.viewer?.accounts[0]?.workersScripts;
+      if (scripts && scripts.length > 0 && scripts[0].scriptName === worker_name) {
         return { success: true };
       } else {
-        console.error('Cloudflare API Error:', data.errors);
-        return { success: false, error: `Worker '${worker_name}' not found or invalid permissions.` };
+        return { success: false, error: `Worker '${worker_name}' not found in account.` };
       }
     } catch (error) {
-      console.error('Error verifying Cloudflare worker:', error);
-      return { success: false, error: 'Failed to connect to Cloudflare API for worker verification.' };
+      console.error('Error verifying Cloudflare worker via GraphQL:', error);
+      return { success: false, error: 'Failed to connect to Cloudflare API for worker verification (GraphQL).' };
     }
   }
   return { success: false, error: 'Internal error: No verification method available.' };
