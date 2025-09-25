@@ -289,7 +289,14 @@ function parseSS(link) {
   const clean = link.substring(0, fragmentIndex !== -1 ? fragmentIndex : link.length).replace('ss://', '');
 
   const [userinfo, hostport] = clean.split('@');
-  const [host, portWithParams] = hostport.split(':');
+
+  const lastColonIndex = hostport.lastIndexOf(':');
+  if (lastColonIndex === -1) {
+    throw new Error('Invalid host-port format for SS link');
+  }
+
+  const host = hostport.substring(0, lastColonIndex);
+  const portWithParams = hostport.substring(lastColonIndex + 1);
   const [portPart, ...paramParts] = portWithParams.split('?');
   const port = parseInt(portPart, 10);
 
