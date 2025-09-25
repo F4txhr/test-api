@@ -14,17 +14,26 @@ const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'default-secret-key-that-is
 
 // --- Schema Initialization ---
 function initializeDatabase() {
-  const createTableQuery = `
+  db.exec(`
     CREATE TABLE IF NOT EXISTS cloudflare_configs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       unique_id TEXT NOT NULL UNIQUE,
       cf_api_token TEXT NOT NULL,
       cf_account_id TEXT NOT NULL,
-      cf_zone_id TEXT NOT NULL,
+      cf_zone_id TEXT,
+      cf_worker_name TEXT,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
-  `;
-  db.exec(createTableQuery);
+  `);
+
+  // Add cf_worker_name column if it doesn't exist (for migration)
+  try {
+    db.prepare('SELECT cf_worker_name FROM cloudflare_configs LIMIT 1').get();
+  } catch (e) {
+    db.exec('ALTER TABLE cloudflare_configs ADD COLUMN cf_worker_name TEXT');
+    console.log('Migrated database: Added cf_worker_name column.');
+  }
+
   console.log('Database and cloudflare_configs table initialized.');
 }
 
@@ -39,13 +48,13 @@ function decrypt(ciphertext) {
 }
 
 // --- Database Functions ---
-function addCloudflareConfig(unique_id, api_token, account_id, zone_id) {
+function addCloudflareConfig(unique_id, api_token, account_id, { zone_id, worker_name }) {
   const encryptedToken = encrypt(api_token);
   const stmt = db.prepare(
-    'INSERT INTO cloudflare_configs (unique_id, cf_api_token, cf_account_id, cf_zone_id) VALUES (?, ?, ?, ?)'
+    'INSERT INTO cloudflare_configs (unique_id, cf_api_token, cf_account_id, cf_zone_id, cf_worker_name) VALUES (?, ?, ?, ?, ?)'
   );
   try {
-    stmt.run(unique_id, encryptedToken, account_id, zone_id);
+    stmt.run(unique_id, encryptedToken, account_id, zone_id, worker_name);
     return { success: true };
   } catch (error) {
     if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
