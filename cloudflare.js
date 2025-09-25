@@ -84,12 +84,7 @@ async function handleRegistration(req, res) {
     });
   }
 
-  // Verify credentials with Cloudflare
-  const verificationResult = await verifyCloudflareCredentials(cf_api_token, cf_account_id, { zone_id: cf_zone_id, worker_name: cf_worker_name });
-  if (!verificationResult.success) {
-    return res.status(401).json({ success: false, error: verificationResult.error });
-  }
-
+  // Verification is temporarily disabled. It will be performed when data is requested.
   // Generate a unique ID and save to the database
   const unique_id = uuidv4();
   const dbResult = addCloudflareConfig(unique_id, cf_api_token, cf_account_id, { zone_id: cf_zone_id, worker_name: cf_worker_name });
