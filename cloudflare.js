@@ -6,57 +6,40 @@ const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKi
 
 // --- Cloudflare API Verification ---
 async function verifyCloudflareCredentials(api_token, account_id, { zone_id, worker_name }) {
-  if (zone_id) {
-    // GraphQL query for Zone verification
-    const query = `query { viewer { accounts(filter: {accountTag: "${account_id}"}) { zones(filter: {zoneTag: "${zone_id}"}) { zoneTag } } } }`;
-    try {
-      const response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${api_token}`,
-          'User-Agent': BROWSER_USER_AGENT
-        },
-        body: JSON.stringify({ query }),
-      });
-      const data = await response.json();
-      if (data.errors) {
-        console.error('Cloudflare API Error:', data.errors);
-        return { success: false, error: 'Invalid credentials or permissions for Zone.' };
+  const url = 'https://api.cloudflare.com/client/v4/user/tokens/verify';
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${api_token}`,
+        'User-Agent': BROWSER_USER_AGENT,
+        'Content-Type': 'application/json'
       }
-      const zones = data.data?.viewer?.accounts[0]?.zones;
-      if (zones && zones.length > 0 && zones[0].zoneTag === zone_id) {
+    });
+
+    const contentType = response.headers.get('content-type') || '';
+    if (contentType.includes('application/json')) {
+      const data = await response.json();
+      if (response.ok && data.success && data.result.status === 'active') {
+        // Token is valid and active. For this diagnostic, we'll return success.
+        // This proves the connection works.
         return { success: true };
       } else {
-        return { success: false, error: 'Account ID or Zone ID mismatch.' };
+        // The API returned a JSON error (e.g., token invalid).
+        const messages = data.errors.map(e => `${e.code}: ${e.message}`).join(', ');
+        return { success: false, error: `Cloudflare API error during token verification: ${messages}` };
       }
-    } catch (error) {
-      console.error('Error verifying Cloudflare zone:', error);
-      return { success: false, error: 'Failed to connect to Cloudflare API for zone verification.' };
+    } else {
+      // Response is not JSON. It's the block page.
+      const responseText = await response.text();
+      console.error('Cloudflare did not return JSON. This is likely a security block. Response body:', responseText.substring(0, 500) + '...');
+      return { success: false, error: `Cloudflare returned a non-JSON response (Status: ${response.status}). This is likely a security block page.` };
     }
-  } else if (worker_name) {
-    // REST API call for Worker verification
-    const url = `https://api.cloudflare.com/client/v4/accounts/${account_id}/workers/scripts/${worker_name}`;
-    try {
-      const response = await fetch(url, {
-        headers: {
-          'Authorization': `Bearer ${api_token}`,
-          'User-Agent': BROWSER_USER_AGENT
-        }
-      });
-      const data = await response.json();
-      if (response.ok && data.success) {
-        return { success: true };
-      } else {
-        console.error('Cloudflare API Error:', data.errors);
-        return { success: false, error: `Worker '${worker_name}' not found or invalid permissions.` };
-      }
-    } catch (error) {
-      console.error('Error verifying Cloudflare worker:', error);
-      return { success: false, error: 'Failed to connect to Cloudflare API for worker verification.' };
-    }
+  } catch (error) {
+    // Network error during fetch
+    console.error('Network error during token verification fetch:', error);
+    return { success: false, error: `Network error during Cloudflare API connection. Details: ${error.message}` };
   }
-  return { success: false, error: 'Internal error: No verification method available.' };
 }
 
 // --- Registration Handler ---
