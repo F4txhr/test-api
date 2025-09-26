@@ -276,7 +276,7 @@ async function handleDataRequest(req, res) {
     }
 
     const accountData = result.data.viewer.accounts[0] || {};
-    const zoneData = result.data.viewer.zone || {};
+    const zoneData = accountData.zone ? accountData.zone[0] : null; // Ambil data zona dari dalam akun
 
     // Inisialisasi objek respons
     const responseData = {
