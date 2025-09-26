@@ -151,7 +151,7 @@ function getComprehensiveAnalyticsQuery(config, since, until) {
         filter: { date_geq: "${since}", date_lt: "${until}" },
         limit: 1
       ) {
-        sum { bytes }
+        sum { edgeResponseBytes }
       }
     }
   ` : '';
@@ -251,7 +251,7 @@ async function handleDataRequest(req, res) {
     // Tambahkan data zona jika ada
     if (config.cf_zone_id && zoneData.zoneBandwidth) {
       responseData.zone_stats = {
-        bandwidth_bytes: zoneData.zoneBandwidth[0]?.sum?.bytes || 0,
+        bandwidth_bytes: zoneData.zoneBandwidth[0]?.sum?.edgeResponseBytes || 0,
       };
     }
 
