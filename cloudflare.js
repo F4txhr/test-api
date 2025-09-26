@@ -178,8 +178,8 @@ function getComprehensiveAnalyticsQuery(config, since, until) {
         accounts(filter: { accountTag: "${cf_account_id}" }) {
           ${accountGlobalStats}
           ${workerStats}
+          ${zoneStats}
         }
-        ${zoneStats}
       }
     }
   `;
@@ -231,8 +231,11 @@ async function handleDataRequest(req, res) {
 
     const result = await response.json();
     if (result.errors) {
-      console.error('Cloudflare API Error:', result.errors);
-      return res.status(500).json({ success: false, error: 'Failed to fetch data from Cloudflare.' });
+      console.error('Cloudflare API Error:', JSON.stringify(result.errors, null, 2));
+      return res.status(500).json({
+        success: false,
+        error: 'Gagal mengambil data dari Cloudflare. Cek log server untuk detail teknis.'
+      });
     }
 
     const accountData = result.data.viewer.accounts[0] || {};
