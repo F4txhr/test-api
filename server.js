@@ -14,6 +14,7 @@ const {
   getTemplateInfo
 } = require('./converter');
 const { initializeDatabase } = require('./database');
+const { sendTelegramAlert } = require('./telegram');
 
 // --- Database Initialization ---
 initializeDatabase();
@@ -28,30 +29,6 @@ const stats = {
   startTime: Date.now(),
   lastResetTime: Date.now()
 };
-
-// --- Telegram Alert ---
-async function sendTelegramAlert(message) {
-  if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_CHAT_ID) {
-    console.warn("⚠️ Telegram alert disabled — token or chat_id not set");
-    return;
-  }
-
-  try {
-    const url = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
-    await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: process.env.TELEGRAM_CHAT_ID,
-        text: `[🚨 PROXY DOWN ALERT]\n${message}`,
-        parse_mode: 'Markdown',
-      }),
-    });
-    console.log("✅ Telegram alert sent");
-  } catch (error) {
-    console.error("❌ Failed to send Telegram alert:", error.message);
-  }
-}
 
 // --- TCP Test with Retry ---
 async function testTCPWithRetry(host, port, maxRetries = 2, baseTimeout = 5000) {
@@ -146,7 +123,7 @@ app.get('/health', async (req, res) => {
     stats.successCount++;
   } else {
     const alertMsg = `Proxy DOWN: ${proxy}\nLatency: ${latency}ms\nAttempt: ${result.attempt}\nError: ${result.error}\nTime: ${new Date().toISOString()}`;
-    sendTelegramAlert(alertMsg);
+    sendTelegramAlert(alertMsg, false); // Memperbaiki panggilan agar sesuai dengan modul telegram.js
   }
 
   const response = {
@@ -224,13 +201,16 @@ app.get('/ping', (req, res) => {
 // ================================
 // 📊 ENDPOINT CLOUDFLARE STATS
 // ================================
-const { handleRegistration, handleDataRequest } = require('./cloudflare');
+const { handleRegistration, handleDataRequest, handleDeleteRegistration } = require('./cloudflare');
 
 // --- Endpoint POST untuk registrasi ---
 app.post('/statscf', handleRegistration);
 
 // --- Endpoint GET untuk mengambil data ---
 app.get('/statscf/data/:id', handleDataRequest);
+
+// --- Endpoint DELETE untuk menghapus registrasi ---
+app.delete('/statscf/:id', handleDeleteRegistration);
 
 
 // ================================

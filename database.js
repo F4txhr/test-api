@@ -26,6 +26,23 @@ function initializeDatabase() {
     );
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS worker_stats_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      config_id INTEGER NOT NULL,
+      date TEXT NOT NULL,
+      requests INTEGER DEFAULT 0,
+      subrequests INTEGER DEFAULT 0,
+      errors INTEGER DEFAULT 0,
+      cpu_time_p50 REAL DEFAULT 0,
+      cpu_time_p90 REAL DEFAULT 0,
+      cpu_time_p99 REAL DEFAULT 0,
+      recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (config_id) REFERENCES cloudflare_configs (id) ON DELETE CASCADE,
+      UNIQUE (config_id, date)
+    );
+  `);
+
   // Add cf_worker_name column if it doesn't exist (for migration)
   try {
     db.prepare('SELECT cf_worker_name FROM cloudflare_configs LIMIT 1').get();
@@ -34,7 +51,7 @@ function initializeDatabase() {
     console.log('Migrated database: Added cf_worker_name column.');
   }
 
-  console.log('Database and cloudflare_configs table initialized.');
+  console.log('Database, cloudflare_configs, and worker_stats_history tables initialized.');
 }
 
 // --- Encryption/Decryption ---
@@ -82,8 +99,87 @@ function getCloudflareConfig(unique_id) {
   }
 }
 
+function getRawCloudflareConfig(unique_id) {
+  try {
+    const stmt = db.prepare('SELECT * FROM cloudflare_configs WHERE unique_id = ?');
+    return stmt.get(unique_id);
+  } catch (error) {
+    console.error('Failed to get raw Cloudflare config:', error);
+    return null;
+  }
+}
+
+// --- Worker Stats Functions ---
+function addWorkerStats(config_id, date, stats) {
+  const stmt = db.prepare(`
+    INSERT INTO worker_stats_history (config_id, date, requests, subrequests, errors, cpu_time_p50, cpu_time_p90, cpu_time_p99)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(config_id, date) DO UPDATE SET
+      requests = excluded.requests,
+      subrequests = excluded.subrequests,
+      errors = excluded.errors,
+      cpu_time_p50 = excluded.cpu_time_p50,
+      cpu_time_p90 = excluded.cpu_time_p90,
+      cpu_time_p99 = excluded.cpu_time_p99,
+      recorded_at = CURRENT_TIMESTAMP;
+  `);
+  try {
+    stmt.run(
+      config_id,
+      date,
+      stats.requests || 0,
+      stats.subrequests || 0,
+      stats.errors || 0,
+      stats.cpu_time_p50 || 0,
+      stats.cpu_time_p90 || 0,
+      stats.cpu_time_p99 || 0
+    );
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to add worker stats:', error);
+    return { success: false, error: 'Database error while saving stats' };
+  }
+}
+
+function getWorkerStats(config_id, since, until) {
+  try {
+    const stmt = db.prepare(`
+      SELECT * FROM worker_stats_history
+      WHERE config_id = ? AND date >= ? AND date <= ?
+      ORDER BY date ASC
+    `);
+    return stmt.all(config_id, since, until);
+  } catch (error) {
+    console.error('Failed to get worker stats:', error);
+    return [];
+  }
+}
+
+function deleteCloudflareConfig(unique_id) {
+  try {
+    // We need the config id for deleting associated stats, although ON DELETE CASCADE should handle it.
+    const config = getCloudflareConfig(unique_id);
+    if (!config) {
+      return { success: false, error: 'ID not found.' };
+    }
+
+    const stmt = db.prepare('DELETE FROM cloudflare_configs WHERE unique_id = ?');
+    const result = stmt.run(unique_id);
+
+    return { success: result.changes > 0 };
+  } catch (error) {
+    console.error('Failed to delete Cloudflare config:', error);
+    return { success: false, error: 'Database error' };
+  }
+}
+
 module.exports = {
   initializeDatabase,
   addCloudflareConfig,
   getCloudflareConfig,
+  getRawCloudflareConfig,
+  addWorkerStats,
+  getWorkerStats,
+  deleteCloudflareConfig,
+  decrypt, // Export decrypt for token verification before deletion
 };
