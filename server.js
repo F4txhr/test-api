@@ -201,13 +201,21 @@ app.get('/ping', (req, res) => {
 // ================================
 // 📊 ENDPOINT CLOUDFLARE STATS
 // ================================
-const { handleRegistration, handleDataRequest, handleDeleteRegistration } = require('./cloudflare');
+const {
+  handleRegistration,
+  handleDataRequest,
+  handleUpdateRegistration,
+  handleDeleteRegistration
+} = require('./cloudflare');
 
 // --- Endpoint POST untuk registrasi ---
 app.post('/statscf', handleRegistration);
 
 // --- Endpoint GET untuk mengambil data ---
 app.get('/statscf/data/:id', handleDataRequest);
+
+// --- Endpoint PUT untuk memperbarui registrasi ---
+app.put('/statscf/:id', handleUpdateRegistration);
 
 // --- Endpoint DELETE untuk menghapus registrasi ---
 app.delete('/statscf/:id', handleDeleteRegistration);

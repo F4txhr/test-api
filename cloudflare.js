@@ -4,6 +4,7 @@ const {
   addCloudflareConfig,
   getCloudflareConfig,
   getRawCloudflareConfig,
+  updateCloudflareConfig,
   deleteCloudflareConfig,
   decrypt,
   addWorkerStats,
@@ -78,7 +79,7 @@ async function verifyCloudflareCredentials(api_token, account_id, { zone_id, wor
 
 // --- Registration Handler ---
 async function handleRegistration(req, res) {
-  const { cf_api_token, cf_account_id, cf_zone_id, cf_worker_name } = req.body;
+  const { cf_api_token, cf_account_id, cf_zone_id, cf_worker_name, error_threshold } = req.body;
 
   // 1. Validasi Input Dasar
   if (!cf_api_token || !cf_account_id) {
@@ -108,16 +109,19 @@ async function handleRegistration(req, res) {
     });
   }
 
-  // 3. Verifikasi Kredensial dengan Cloudflare (opsional, tapi praktik yang baik)
-  // Untuk saat ini, verifikasi dinonaktifkan sesuai logika sebelumnya.
-  // const verification = await verifyCloudflareCredentials(cf_api_token, cf_account_id, { zone_id: cf_zone_id, worker_name: cf_worker_name });
-  // if (!verification.success) {
-  //   return res.status(403).json({ success: false, error: `Verifikasi Cloudflare gagal: ${verification.error}` });
-  // }
+  // 3. Verifikasi Kredensial dengan Cloudflare
+  const verification = await verifyCloudflareCredentials(cf_api_token, cf_account_id, { zone_id: cf_zone_id, worker_name: cf_worker_name });
+  if (!verification.success) {
+    return res.status(403).json({ success: false, error: `Verifikasi Cloudflare gagal: ${verification.error}` });
+  }
 
   // 4. Buat Konfigurasi Baru
   const unique_id = uuidv4();
-  const dbResult = addCloudflareConfig(unique_id, cf_api_token, cf_account_id, { zone_id: cf_zone_id, worker_name: cf_worker_name });
+  const dbResult = addCloudflareConfig(unique_id, cf_api_token, cf_account_id, {
+    zone_id: cf_zone_id,
+    worker_name: cf_worker_name,
+    error_threshold: error_threshold
+  });
 
   if (!dbResult.success) {
     return res.status(500).json({ success: false, error: dbResult.error });
@@ -206,12 +210,45 @@ async function handleDataRequest(req, res) {
     if (!config.cf_worker_name) {
       return res.status(400).json({ success: false, error: 'Historical data is only available for workers.' });
     }
-    const historicalData = getWorkerStats(config.id, since, until);
+
+    const dailyData = getWorkerStats(config.id, since, until);
+
+    if (dailyData.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data_source: 'database_history',
+        period: { since, until },
+        data: { summary: {}, daily_data: [] }
+      });
+    }
+
+    const summary = dailyData.reduce((acc, day) => {
+      acc.total_requests += day.requests || 0;
+      acc.total_subrequests += day.subrequests || 0;
+      acc.total_errors += day.errors || 0;
+      acc.sum_cpu_p50 += day.cpu_time_p50 || 0;
+      acc.sum_cpu_p90 += day.cpu_time_p90 || 0;
+      acc.sum_cpu_p99 += day.cpu_time_p99 || 0;
+      return acc;
+    }, {
+      total_requests: 0, total_subrequests: 0, total_errors: 0,
+      sum_cpu_p50: 0, sum_cpu_p90: 0, sum_cpu_p99: 0
+    });
+
+    const dayCount = dailyData.length;
+    summary.average_cpu_p50 = summary.sum_cpu_p50 / dayCount;
+    summary.average_cpu_p90 = summary.sum_cpu_p90 / dayCount;
+    summary.average_cpu_p99 = summary.sum_cpu_p99 / dayCount;
+
+    delete summary.sum_cpu_p50;
+    delete summary.sum_cpu_p90;
+    delete summary.sum_cpu_p99;
+
     return res.status(200).json({
       success: true,
       data_source: 'database_history',
       period: { since, until },
-      data: historicalData,
+      data: { summary, daily_data: dailyData },
     });
   }
 
@@ -273,9 +310,11 @@ async function handleDataRequest(req, res) {
 
       // Simpan histori & kirim notifikasi untuk worker
       addWorkerStats(config.id, today, workerStats);
-      const ERROR_THRESHOLD = 100;
-      if (workerStats.errors > ERROR_THRESHOLD) {
-        const message = `Worker "${config.cf_worker_name}" has recorded ${workerStats.errors} errors today.`;
+
+      // Gunakan ambang batas dari database, dengan fallback ke 100 jika tidak ada
+      const errorThreshold = config.error_threshold || 100;
+      if (workerStats.errors > errorThreshold) {
+        const message = `Worker "${config.cf_worker_name}" telah mencatat ${workerStats.errors} error hari ini, melebihi ambang batas (${errorThreshold}).`;
         sendTelegramAlert(message, true);
       }
     }
@@ -330,8 +369,45 @@ async function handleDeleteRegistration(req, res) {
   }
 }
 
+// --- Update Handler ---
+async function handleUpdateRegistration(req, res) {
+  const { id } = req.params;
+  const { cf_zone_id, cf_worker_name, error_threshold } = req.body;
+
+  if (!cf_zone_id && !cf_worker_name && error_threshold === undefined) {
+    return res.status(400).json({
+      success: false,
+      error: 'Harap sediakan `cf_zone_id`, `cf_worker_name`, atau `error_threshold` untuk diperbarui.',
+    });
+  }
+
+  // Ambil konfigurasi yang ada untuk mendapatkan token dan ID akun
+  const config = getCloudflareConfig(id);
+  if (!config) {
+    return res.status(404).json({ success: false, error: 'ID tidak ditemukan.' });
+  }
+
+  // Verifikasi hanya jika zona atau worker diubah
+  if (cf_zone_id || cf_worker_name) {
+    const verification = await verifyCloudflareCredentials(config.cf_api_token, config.cf_account_id, { zone_id: cf_zone_id, worker_name: cf_worker_name });
+    if (!verification.success) {
+      return res.status(403).json({ success: false, error: `Verifikasi Cloudflare gagal: ${verification.error}` });
+    }
+  }
+
+  // Lakukan pembaruan di database
+  const result = updateCloudflareConfig(id, { zone_id: cf_zone_id, worker_name: cf_worker_name, error_threshold: error_threshold });
+
+  if (result.success) {
+    res.status(200).json({ success: true, message: 'Konfigurasi berhasil diperbarui.' });
+  } else {
+    res.status(500).json({ success: false, error: result.error || 'Gagal memperbarui konfigurasi.' });
+  }
+}
+
 module.exports = {
   handleRegistration,
   handleDataRequest,
+  handleUpdateRegistration,
   handleDeleteRegistration,
 };

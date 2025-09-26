@@ -22,9 +22,26 @@ function initializeDatabase() {
       cf_account_id TEXT NOT NULL,
       cf_zone_id TEXT,
       cf_worker_name TEXT,
+      error_threshold INTEGER DEFAULT 100,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
+
+  // Add cf_worker_name column if it doesn't exist (for migration)
+  try {
+    db.prepare('SELECT cf_worker_name FROM cloudflare_configs LIMIT 1').get();
+  } catch (e) {
+    db.exec('ALTER TABLE cloudflare_configs ADD COLUMN cf_worker_name TEXT');
+    console.log('Migrated database: Added cf_worker_name column.');
+  }
+
+  // Add error_threshold column if it doesn't exist (for migration)
+  try {
+    db.prepare('SELECT error_threshold FROM cloudflare_configs LIMIT 1').get();
+  } catch (e) {
+    db.exec('ALTER TABLE cloudflare_configs ADD COLUMN error_threshold INTEGER DEFAULT 100');
+    console.log('Migrated database: Added error_threshold column.');
+  }
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS worker_stats_history (
@@ -65,13 +82,15 @@ function decrypt(ciphertext) {
 }
 
 // --- Database Functions ---
-function addCloudflareConfig(unique_id, api_token, account_id, { zone_id, worker_name }) {
+function addCloudflareConfig(unique_id, api_token, account_id, { zone_id, worker_name, error_threshold }) {
   const encryptedToken = encrypt(api_token);
   const stmt = db.prepare(
-    'INSERT INTO cloudflare_configs (unique_id, cf_api_token, cf_account_id, cf_zone_id, cf_worker_name) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO cloudflare_configs (unique_id, cf_api_token, cf_account_id, cf_zone_id, cf_worker_name, error_threshold) VALUES (?, ?, ?, ?, ?, ?)'
   );
   try {
-    stmt.run(unique_id, encryptedToken, account_id, zone_id, worker_name);
+    // Gunakan nilai default 100 jika tidak disediakan
+    const threshold = error_threshold === undefined ? 100 : error_threshold;
+    stmt.run(unique_id, encryptedToken, account_id, zone_id, worker_name, threshold);
     return { success: true };
   } catch (error) {
     if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') {
@@ -190,11 +209,49 @@ function findExistingConfig({ account_id, zone_id, worker_name }) {
   }
 }
 
+function updateCloudflareConfig(unique_id, { zone_id, worker_name, error_threshold }) {
+  const fields = [];
+  const params = [];
+
+  if (zone_id !== undefined) {
+    fields.push('cf_zone_id = ?');
+    params.push(zone_id);
+  }
+  if (worker_name !== undefined) {
+    fields.push('cf_worker_name = ?');
+    params.push(worker_name);
+  }
+  if (error_threshold !== undefined) {
+    fields.push('error_threshold = ?');
+    params.push(error_threshold);
+  }
+
+  if (fields.length === 0) {
+    return { success: false, error: 'No fields to update.' };
+  }
+
+  params.push(unique_id);
+
+  try {
+    const stmt = db.prepare(`
+      UPDATE cloudflare_configs
+      SET ${fields.join(', ')}
+      WHERE unique_id = ?
+    `);
+    const result = stmt.run(...params);
+    return { success: result.changes > 0 };
+  } catch (error) {
+    console.error('Failed to update Cloudflare config:', error);
+    return { success: false, error: 'Database error during update.' };
+  }
+}
+
 module.exports = {
   initializeDatabase,
   addCloudflareConfig,
   getCloudflareConfig,
   getRawCloudflareConfig,
+  updateCloudflareConfig,
   addWorkerStats,
   getWorkerStats,
   deleteCloudflareConfig,
