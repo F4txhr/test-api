@@ -131,7 +131,7 @@ function getWorkerAnalyticsQuery(account_id, worker_name, since, until) {
             },
             limit: 1
           ) {
-            sum { requests, subrequests }
+            sum { requests, subrequests, errors }
           }
         }
       }
@@ -194,12 +194,13 @@ async function handleDataRequest(req, res) {
         total_bandwidth_today_bytes: analytics.bytes,
       };
     } else {
-      const analytics = data.data.viewer.accounts[0].workersInvocationsAdaptive[0]?.sum || { requests: 0, subrequests: 0 };
+      const analytics = data.data.viewer.accounts[0].workersInvocationsAdaptive[0]?.sum || { requests: 0, subrequests: 0, errors: 0 };
       responseData = {
         type: 'worker',
         worker_name: config.cf_worker_name,
         total_requests_today: analytics.requests,
         total_subrequests_today: analytics.subrequests,
+        total_errors_today: analytics.errors,
         note: 'Bandwidth data is not available for worker-level analytics.',
       };
     }
