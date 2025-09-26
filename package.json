@@ -4,6 +4,7 @@
   "description": "VPN configuration converter with multiple formats and template levels",
   "main": "server.js",
   "scripts": {
+    "test": "jest",
     "start": "node server.js",
     "setup": "node setup-templates.js",
     "dev": "nodemon server.js",
@@ -22,6 +23,7 @@
     "uuid": "^8.3.2"
   },
   "devDependencies": {
+    "jest": "^29.7.0",
     "nodemon": "^3.0.1"
   },
   "engines": {

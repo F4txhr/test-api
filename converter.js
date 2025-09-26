@@ -264,7 +264,7 @@ function parseTrojan(link) {
 
   return {
     type: 'trojan',
-    password: userinfo,
+    password: decodeURIComponent(userinfo),
     host,
     port: port,
     security: 'tls',
@@ -970,5 +970,6 @@ module.exports = {
   handleConvertPostRequest,
   handleRawRequest,
   handleRawPostRequest,
-  getTemplateInfo
+  getTemplateInfo,
+  parseTrojan,
 };
