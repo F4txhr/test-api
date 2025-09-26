@@ -8,6 +8,7 @@ const {
   decrypt,
   addWorkerStats,
   getWorkerStats,
+  findExistingConfig,
 } = require('./database');
 const { sendTelegramAlert } = require('./telegram');
 
@@ -79,22 +80,42 @@ async function verifyCloudflareCredentials(api_token, account_id, { zone_id, wor
 async function handleRegistration(req, res) {
   const { cf_api_token, cf_account_id, cf_zone_id, cf_worker_name } = req.body;
 
+  // 1. Validasi Input Dasar
   if (!cf_api_token || !cf_account_id) {
     return res.status(400).json({
       success: false,
-      error: 'Missing required fields: cf_api_token, cf_account_id',
+      error: 'Field `cf_api_token` dan `cf_account_id` wajib diisi.',
     });
   }
 
+  // Memastikan setidaknya salah satu (zona atau worker) disediakan
   if (!cf_zone_id && !cf_worker_name) {
     return res.status(400).json({
       success: false,
-      error: 'Please provide either cf_zone_id or cf_worker_name',
+      error: 'Harap sediakan `cf_zone_id` (untuk pemantauan bandwidth) atau `cf_worker_name` (untuk pemantauan worker).',
     });
   }
 
-  // Verification is temporarily disabled. It will be performed when data is requested.
-  // Generate a unique ID and save to the database
+  // 2. Pemeriksaan Duplikat
+  const existingConfig = findExistingConfig({ account_id: cf_account_id, zone_id: cf_zone_id, worker_name: cf_worker_name });
+  if (existingConfig) {
+    const { type, id } = existingConfig;
+    const resourceName = type === 'worker' ? `Worker "${cf_worker_name}"` : `Zone ID "${cf_zone_id}"`;
+    return res.status(409).json({ // 409 Conflict
+      success: false,
+      error: `Konfigurasi duplikat: ${resourceName} sudah terdaftar untuk akun ini dengan ID unik: ${id}.`,
+      existing_unique_id: id,
+    });
+  }
+
+  // 3. Verifikasi Kredensial dengan Cloudflare (opsional, tapi praktik yang baik)
+  // Untuk saat ini, verifikasi dinonaktifkan sesuai logika sebelumnya.
+  // const verification = await verifyCloudflareCredentials(cf_api_token, cf_account_id, { zone_id: cf_zone_id, worker_name: cf_worker_name });
+  // if (!verification.success) {
+  //   return res.status(403).json({ success: false, error: `Verifikasi Cloudflare gagal: ${verification.error}` });
+  // }
+
+  // 4. Buat Konfigurasi Baru
   const unique_id = uuidv4();
   const dbResult = addCloudflareConfig(unique_id, cf_api_token, cf_account_id, { zone_id: cf_zone_id, worker_name: cf_worker_name });
 
@@ -104,46 +125,61 @@ async function handleRegistration(req, res) {
 
   res.status(201).json({
     success: true,
-    message: 'Successfully registered. Use this ID to access your stats.',
+    message: 'Registrasi berhasil. Gunakan ID unik ini untuk mengakses statistik Anda.',
     unique_id: unique_id,
   });
 }
 
-// --- GraphQL Queries for Cloudflare Analytics ---
-function getZoneAnalyticsQuery(zone_id, since, until) {
-  return `
-    query {
-      viewer {
-        zones(filter: { zoneTag: "${zone_id}" }) {
-          httpRequestsAdaptiveGroups(
-            filter: { date_geq: "${since}", date_lt: "${until}" },
-            limit: 1
-          ) {
-            sum { requests, bytes }
-          }
-        }
-      }
+// --- GraphQL Query Builder ---
+function getComprehensiveAnalyticsQuery(config, since, until) {
+  const { cf_account_id, cf_zone_id, cf_worker_name } = config;
+
+  // Bagian kueri untuk statistik global akun (selalu ada)
+  const accountGlobalStats = `
+    accountRequests: httpRequests1dGroups(
+      limit: 1,
+      filter: { date_geq: "${since}", date_lt: "${until}" }
+    ) {
+      sum { requests }
     }
   `;
-}
 
-function getWorkerAnalyticsQuery(account_id, worker_name, since, until) {
+  // Bagian kueri untuk statistik zona (jika zone_id ada)
+  const zoneStats = cf_zone_id ? `
+    zone: zones(filter: { zoneTag: "${cf_zone_id}" }) {
+      zoneBandwidth: httpRequestsAdaptiveGroups(
+        filter: { date_geq: "${since}", date_lt: "${until}" },
+        limit: 1
+      ) {
+        sum { bytes }
+      }
+    }
+  ` : '';
+
+  // Bagian kueri untuk statistik worker (jika worker_name ada)
+  const workerStats = cf_worker_name ? `
+    workerInvocations: workersInvocationsAdaptive(
+      filter: {
+        datetime_geq: "${since}T00:00:00Z",
+        datetime_lt: "${until}T00:00:00Z",
+        scriptName: "${cf_worker_name}"
+      },
+      limit: 1
+    ) {
+      sum { requests, subrequests, errors }
+      quantiles { cpuTimeP50, cpuTimeP90, cpuTimeP99 }
+    }
+  ` : '';
+
+  // Gabungkan semua bagian menjadi satu kueri
   return `
     query {
       viewer {
-        accounts(filter: { accountTag: "${account_id}" }) {
-          workersInvocationsAdaptive(
-            filter: {
-              datetime_geq: "${since}T00:00:00Z",
-              datetime_lt: "${until}T00:00:00Z",
-              scriptName: "${worker_name}"
-            },
-            limit: 1
-          ) {
-            sum { requests, subrequests, errors }
-            quantiles { cpuTimeP50, cpuTimeP90, cpuTimeP99 }
-          }
+        accounts(filter: { accountTag: "${cf_account_id}" }) {
+          ${accountGlobalStats}
+          ${workerStats}
         }
+        ${zoneStats}
       }
     }
   `;
@@ -152,7 +188,7 @@ function getWorkerAnalyticsQuery(account_id, worker_name, since, until) {
 // --- Data Fetching Handler ---
 async function handleDataRequest(req, res) {
   const { id } = req.params;
-  const { since, until } = req.query; // Ambil parameter rentang waktu
+  const { since, until } = req.query;
 
   if (!id) {
     return res.status(400).json({ success: false, error: 'Missing unique ID.' });
@@ -165,85 +201,88 @@ async function handleDataRequest(req, res) {
 
   const today = new Date().toISOString().slice(0, 10);
 
-  // --- Logika Baru: Ambil dari histori jika rentang waktu ada dan di masa lalu ---
+  // --- Logika Histori (Hanya Worker) ---
   if (since && until && until < today) {
-    if (config.cf_zone_id) {
-      // Fitur histori saat ini hanya untuk worker, belum untuk zone
-      return res.status(400).json({ success: false, error: 'Historical data is only available for workers, not zones.' });
+    if (!config.cf_worker_name) {
+      return res.status(400).json({ success: false, error: 'Historical data is only available for workers.' });
     }
-
-    console.log(`Fetching historical data for worker ${config.cf_worker_name} from ${since} to ${until}`);
     const historicalData = getWorkerStats(config.id, since, until);
-
     return res.status(200).json({
       success: true,
       data_source: 'database_history',
-      worker_name: config.cf_worker_name,
       period: { since, until },
       data: historicalData,
     });
   }
 
-  // --- Logika Lama (Default): Ambil data hari ini dari API Cloudflare ---
+  // --- Pengambilan Data Langsung dari API ---
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   const tomorrowStr = tomorrow.toISOString().slice(0, 10);
 
-  let query;
-  if (config.cf_zone_id) {
-    query = getZoneAnalyticsQuery(config.cf_zone_id, today, tomorrowStr);
-  } else if (config.cf_worker_name) {
-    query = getWorkerAnalyticsQuery(config.cf_account_id, config.cf_worker_name, today, tomorrowStr);
-  } else {
-    return res.status(500).json({ success: false, error: 'Invalid configuration found.' });
-  }
+  const query = getComprehensiveAnalyticsQuery(config, today, tomorrowStr);
 
   try {
     const response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.cf_api_token}`, 'User-Agent': BROWSER_USER_AGENT },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.cf_api_token}` },
       body: JSON.stringify({ query }),
     });
 
-    const data = await response.json();
-
-    if (data.errors) {
-      console.error('Cloudflare API Error:', data.errors);
+    const result = await response.json();
+    if (result.errors) {
+      console.error('Cloudflare API Error:', result.errors);
       return res.status(500).json({ success: false, error: 'Failed to fetch data from Cloudflare.' });
     }
 
-    let responseData;
-    if (config.cf_zone_id) {
-      const analytics = data.data.viewer.zones[0].httpRequestsAdaptiveGroups[0]?.sum || { requests: 0, bytes: 0 };
-      responseData = { type: 'zone', zone_id: config.cf_zone_id, ...analytics };
-    } else {
-      const invocation = data.data.viewer.accounts[0].workersInvocationsAdaptive[0] || {};
-      const sum = invocation.sum || { requests: 0, subrequests: 0, errors: 0 };
-      const quantiles = invocation.quantiles || { cpuTimeP50: null, cpuTimeP90: null, cpuTimeP99: null };
+    const accountData = result.data.viewer.accounts[0] || {};
+    const zoneData = result.data.viewer.zone || {};
 
-      responseData = {
-        type: 'worker',
-        worker_name: config.cf_worker_name,
-        requests: sum.requests,
-        subrequests: sum.subrequests,
-        errors: sum.errors,
+    // Inisialisasi objek respons
+    const responseData = {
+      global_stats: {
+        total_requests: accountData.accountRequests?.[0]?.sum?.requests || 0,
+      },
+    };
+
+    // Tambahkan data zona jika ada
+    if (config.cf_zone_id && zoneData.zoneBandwidth) {
+      responseData.zone_stats = {
+        bandwidth_bytes: zoneData.zoneBandwidth[0]?.sum?.bytes || 0,
+      };
+    }
+
+    // Tambahkan data worker jika ada
+    if (config.cf_worker_name && accountData.workerInvocations) {
+      const invocation = accountData.workerInvocations[0] || {};
+      const sum = invocation.sum || {};
+      const quantiles = invocation.quantiles || {};
+
+      const workerStats = {
+        requests: sum.requests || 0,
+        subrequests: sum.subrequests || 0,
+        errors: sum.errors || 0,
         cpu_time_p50: quantiles.cpuTimeP50,
         cpu_time_p90: quantiles.cpuTimeP90,
         cpu_time_p99: quantiles.cpuTimeP99,
       };
+      responseData.worker_stats = workerStats;
 
-      // Simpan statistik harian ke database
-      addWorkerStats(config.id, today, responseData);
-
-      // Kirim notifikasi jika error melebihi ambang batas
+      // Simpan histori & kirim notifikasi untuk worker
+      addWorkerStats(config.id, today, workerStats);
       const ERROR_THRESHOLD = 100;
-      if (responseData.errors > ERROR_THRESHOLD) {
-        const message = `Worker "${config.cf_worker_name}" has recorded ${responseData.errors} errors today.`;
+      if (workerStats.errors > ERROR_THRESHOLD) {
+        const message = `Worker "${config.cf_worker_name}" has recorded ${workerStats.errors} errors today.`;
         sendTelegramAlert(message, true);
       }
     }
 
-    res.status(200).json({ success: true, data_source: 'cloudflare_api', period: { since: today, until: today }, data: [responseData] });
+    res.status(200).json({
+      success: true,
+      data_source: 'cloudflare_api',
+      period: { since: today, until: today },
+      data: [responseData],
+    });
 
   } catch (error) {
     console.error('Error fetching Cloudflare data:', error);

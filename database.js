@@ -173,6 +173,23 @@ function deleteCloudflareConfig(unique_id) {
   }
 }
 
+function findExistingConfig({ account_id, zone_id, worker_name }) {
+  try {
+    const stmt = db.prepare(`
+      SELECT unique_id FROM cloudflare_configs
+      WHERE cf_account_id = ? AND (
+        (cf_zone_id IS NOT NULL AND cf_zone_id = ?) OR
+        (cf_worker_name IS NOT NULL AND cf_worker_name = ?)
+      )
+    `);
+    const row = stmt.get(account_id, zone_id, worker_name);
+    return row;
+  } catch (error) {
+    console.error('Gagal memeriksa konfigurasi yang ada:', error);
+    return null;
+  }
+}
+
 module.exports = {
   initializeDatabase,
   addCloudflareConfig,
@@ -181,5 +198,6 @@ module.exports = {
   addWorkerStats,
   getWorkerStats,
   deleteCloudflareConfig,
+  findExistingConfig,
   decrypt, // Export decrypt for token verification before deletion
 };
