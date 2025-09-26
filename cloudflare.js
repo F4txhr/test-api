@@ -126,7 +126,7 @@ function getWorkerAnalyticsQuery(account_id, worker_name, since, until) {
           workersInvocationsAdaptive(
             filter: {
               datetime_geq: "${since}T00:00:00Z",
-              datetime_lt: "${until}T23:59:59Z",
+              datetime_lt: "${until}T00:00:00Z",
               scriptName: "${worker_name}"
             },
             limit: 1
