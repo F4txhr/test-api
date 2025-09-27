@@ -1,6 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
-    // Gunakan path relatif. Semua permintaan akan diarahkan ke Worker itu sendiri.
-    const API_BASE_URL = '';
+    const API_BASE_URL = 'https://test-api.up.railway.app';
 
     // --- Referensi Elemen Utama ---
     const select = document.getElementById('registration-select');
