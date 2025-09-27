@@ -1,0 +1,14 @@
+# Nama worker Anda di Cloudflare. Ganti dengan nama yang unik.
+name = "cf-analytics-dashboard"
+
+# Skrip utama yang akan dijalankan oleh Worker.
+main = "index.js"
+
+# Tanggal kompatibilitas untuk memastikan fitur berjalan seperti yang diharapkan.
+compatibility_date = "2024-05-01"
+
+# Konfigurasi ini memberitahu Worker untuk juga menyajikan aset statis.
+[site]
+# Direktori yang berisi file statis Anda (HTML, CSS, JS).
+# "." berarti direktori utama (root) dari proyek ini.
+bucket = "."
