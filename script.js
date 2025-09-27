@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const delBtn = document.getElementById('delete-button');
   const historyBtn = document.getElementById('history-button');
   const apiStatusIndicator = document.getElementById('api-status-indicator');
+  const recheckApiBtn = document.getElementById('recheck-api-button');
   const statsDisplay = document.getElementById('stats-display');
   const loading = document.getElementById('loading-indicator');
   const errorBox = document.getElementById('error-message');
@@ -348,6 +349,7 @@ document.addEventListener('DOMContentLoaded', () => {
   editBtn.addEventListener('click', () => openModal('update'));
   delBtn.addEventListener('click', () => openModal('delete'));
   historyBtn.addEventListener('click', () => openModal('history'));
+  recheckApiBtn.addEventListener('click', checkApiStatus);
   document.querySelectorAll('.close-button').forEach(btn => btn.addEventListener('click', closeAllModals));
   window.addEventListener('click', e => { if (e.target.classList.contains('modal')) closeAllModals(); });
 
@@ -358,6 +360,8 @@ document.addEventListener('DOMContentLoaded', () => {
         apiStatusIndicator.classList.remove('error');
         apiStatusIndicator.classList.add('ok');
         apiStatusIndicator.title = 'API Aktif';
+        addBtn.disabled = false;
+        refreshBtn.disabled = false;
       } else {
         throw new Error('Status API tidak OK');
       }
@@ -365,6 +369,8 @@ document.addEventListener('DOMContentLoaded', () => {
       apiStatusIndicator.classList.remove('ok');
       apiStatusIndicator.classList.add('error');
       apiStatusIndicator.title = 'API tidak dapat dihubungi';
+      addBtn.disabled = true;
+      refreshBtn.disabled = true;
     }
   }
 
