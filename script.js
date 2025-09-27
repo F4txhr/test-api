@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const addBtn = document.getElementById('add-new-button');
   const editBtn = document.getElementById('edit-button');
   const delBtn = document.getElementById('delete-button');
+  const historyBtn = document.getElementById('history-button');
   const statsDisplay = document.getElementById('stats-display');
   const loading = document.getElementById('loading-indicator');
   const errorBox = document.getElementById('error-message');
@@ -14,7 +15,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const modals = {
     registration: document.getElementById('registration-modal'),
     update: document.getElementById('update-modal'),
-    delete: document.getElementById('delete-modal')
+    delete: document.getElementById('delete-modal'),
+    history: document.getElementById('history-modal')
   };
 
   function closeAllModals() {
@@ -196,6 +198,85 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
+  document.getElementById('history-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const errorDiv = document.getElementById('history-error');
+    const resultsDiv = document.getElementById('history-results');
+    errorDiv.classList.add('hidden');
+    resultsDiv.classList.add('hidden');
+
+    const formData = new FormData(e.target);
+    const since = formData.get('since');
+    const until = formData.get('until');
+    const selectedId = select.value;
+
+    if (!selectedId) {
+      errorDiv.textContent = "Silakan pilih konfigurasi terlebih dahulu.";
+      errorDiv.classList.remove('hidden');
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API_BASE_URL}/statscf/data/${selectedId}?since=${since}&until=${until}`);
+      if (!res.headers.get('content-type')?.includes('application/json')) {
+        throw new Error("Respons server tidak valid. Coba lagi nanti.");
+      }
+      const result = await res.json();
+      if (!res.ok || !result.success) {
+        throw new Error(result.error || 'Gagal mengambil data riwayat.');
+      }
+      displayHistory(result.data);
+    } catch (err) {
+      errorDiv.textContent = err.message;
+      errorDiv.classList.remove('hidden');
+    }
+  });
+
+  function displayHistory(data) {
+    const resultsContainer = document.getElementById('history-results');
+    const { summary, daily_data } = data;
+
+    if (!summary || !daily_data || daily_data.length === 0) {
+      resultsContainer.innerHTML = '<p>Tidak ada data riwayat untuk rentang tanggal yang dipilih.</p>';
+      resultsContainer.classList.remove('hidden');
+      return;
+    }
+
+    // Bangun tabel HTML
+    let html = `
+      <h4>Ringkasan Periode</h4>
+      <ul>
+        <li><strong>Total Permintaan:</strong> ${summary.total_requests.toLocaleString('id-ID')}</li>
+        <li><strong>Total Error:</strong> ${summary.total_errors.toLocaleString('id-ID')}</li>
+        <li><strong>CPU Time P50 Rata-rata:</strong> ${summary.average_cpu_p50.toFixed(2)}µs</li>
+      </ul>
+      <h4>Data Harian</h4>
+      <table style="width: 100%; border-collapse: collapse; text-align: left;">
+        <thead>
+          <tr>
+            <th style="border-bottom: 1px solid #ddd; padding: 8px;">Tanggal</th>
+            <th style="border-bottom: 1px solid #ddd; padding: 8px;">Permintaan</th>
+            <th style="border-bottom: 1px solid #ddd; padding: 8px;">Error</th>
+          </tr>
+        </thead>
+        <tbody>
+    `;
+
+    daily_data.forEach(day => {
+      html += `
+        <tr>
+          <td style="padding: 8px; border-bottom: 1px solid #eee;">${day.date}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #eee;">${day.requests.toLocaleString('id-ID')}</td>
+          <td style="padding: 8px; border-bottom: 1px solid #eee;">${day.errors.toLocaleString('id-ID')}</td>
+        </tr>
+      `;
+    });
+
+    html += `</tbody></table>`;
+    resultsContainer.innerHTML = html;
+    resultsContainer.classList.remove('hidden');
+  }
+
   document.getElementById('delete-form').addEventListener('submit', async e => {
     e.preventDefault();
     if (!select.value) return;
@@ -220,13 +301,16 @@ document.addEventListener('DOMContentLoaded', () => {
   // Event binding
   select.addEventListener('change', () => {
     fetchStats();
-    editBtn.disabled = !select.value;
-    delBtn.disabled = !select.value;
+    const isDisabled = !select.value;
+    editBtn.disabled = isDisabled;
+    delBtn.disabled = isDisabled;
+    historyBtn.disabled = isDisabled;
   });
   refreshBtn.addEventListener('click', fetchStats);
-  addBtn.addEventListener('click', ()=>openModal('registration'));
-  editBtn.addEventListener('click', ()=>openModal('update'));
-  delBtn.addEventListener('click', ()=>openModal('delete'));
+  addBtn.addEventListener('click', () => openModal('registration'));
+  editBtn.addEventListener('click', () => openModal('update'));
+  delBtn.addEventListener('click', () => openModal('delete'));
+  historyBtn.addEventListener('click', () => openModal('history'));
   document.querySelectorAll('.close-button').forEach(btn => btn.addEventListener('click', closeAllModals));
   window.addEventListener('click', e => { if (e.target.classList.contains('modal')) closeAllModals(); });
 

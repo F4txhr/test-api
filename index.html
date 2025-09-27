@@ -18,6 +18,7 @@
         <option value="">-- Silakan pilih --</option>
       </select>
       <button id="refresh-button" class="btn">Refresh</button>
+      <button id="history-button" class="btn" disabled>Riwayat</button>
       <button id="edit-button" class="btn" disabled>Edit</button>
       <button id="delete-button" class="btn btn-danger" disabled>Hapus</button>
       <button id="add-new-button" class="btn btn-primary">Daftarkan Baru</button>
@@ -87,6 +88,24 @@
         <button type="submit" class="btn btn-danger">Hapus Permanen</button>
       </form>
       <div id="delete-modal-error-message" class="modal-error hidden"></div>
+    </div>
+  </div>
+
+  <!-- Modal Riwayat -->
+  <div id="history-modal" class="modal hidden">
+    <div class="modal-content">
+      <span class="close-button">&times;</span>
+      <h2>Riwayat Statistik Worker</h2>
+      <form id="history-form">
+        <p>Pilih rentang tanggal (maksimal 30 hari yang lalu).</p>
+        <label for="history-since">Dari Tanggal:</label>
+        <input type="date" id="history-since" name="since" required>
+        <label for="history-until">Sampai Tanggal:</label>
+        <input type="date" id="history-until" name="until" required>
+        <button type="submit" class="btn btn-primary">Tampilkan Riwayat</button>
+      </form>
+      <div id="history-error" class="modal-error hidden"></div>
+      <div id="history-results" class="hidden" style="margin-top: 1rem;"></div>
     </div>
   </div>
 
