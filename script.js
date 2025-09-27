@@ -4,34 +4,64 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Referensi Elemen Utama ---
     const select = document.getElementById('registration-select');
     const refreshButton = document.getElementById('refresh-button');
-    const statsContainer = document.getElementById('stats-container');
     const statsDisplay = document.getElementById('stats-display');
     const loadingIndicator = document.getElementById('loading-indicator');
     const errorMessage = document.getElementById('error-message');
-
-    // --- Referensi Elemen Modal Pendaftaran ---
-    const registrationModal = document.getElementById('registration-modal');
     const addNewButton = document.getElementById('add-new-button');
-    const closeRegistrationModalButton = registrationModal.querySelector('.close-button');
-    const registrationForm = document.getElementById('registration-form');
-    const registrationModalError = document.getElementById('modal-error-message');
-
-    // --- Referensi Elemen Modal Pembaruan ---
-    const updateModal = document.getElementById('update-modal');
     const editButton = document.getElementById('edit-button');
-    const closeUpdateModalButton = updateModal.querySelector('.close-button');
-    const updateForm = document.getElementById('update-form');
-    const updateModalError = document.getElementById('update-modal-error-message');
-
-    // --- Referensi Elemen Modal Penghapusan ---
-    const deleteModal = document.getElementById('delete-modal');
     const deleteButton = document.getElementById('delete-button');
-    const closeDeleteModalButton = deleteModal.querySelector('.close-button');
-    const deleteForm = document.getElementById('delete-form');
-    const deleteModalError = document.getElementById('delete-modal-error-message');
+
+    // --- Kumpulan Modal ---
+    const modals = {
+        registration: {
+            element: document.getElementById('registration-modal'),
+            form: document.getElementById('registration-form'),
+            error: document.getElementById('modal-error-message'),
+            openButton: addNewButton,
+            closeButton: document.querySelector('#registration-modal .close-button'),
+            submitHandler: handleRegistrationSubmit,
+        },
+        update: {
+            element: document.getElementById('update-modal'),
+            form: document.getElementById('update-form'),
+            error: document.getElementById('update-modal-error-message'),
+            openButton: editButton,
+            closeButton: document.querySelector('#update-modal .close-button'),
+            submitHandler: handleUpdateSubmit,
+        },
+        delete: {
+            element: document.getElementById('delete-modal'),
+            form: document.getElementById('delete-form'),
+            error: document.getElementById('delete-modal-error-message'),
+            openButton: deleteButton,
+            closeButton: document.querySelector('#delete-modal .close-button'),
+            submitHandler: handleDeleteSubmit,
+        }
+    };
+
+    let activeModal = null;
+
+    // --- MANAJER MODAL TERPUSAT ---
+    function openModal(modalKey) {
+        if (activeModal) closeModal(); // Tutup modal yang sedang aktif jika ada
+
+        const modal = modals[modalKey];
+        if (modal) {
+            modal.form.reset();
+            modal.error.classList.add('hidden');
+            modal.element.classList.remove('hidden');
+            activeModal = modal.element;
+        }
+    }
+
+    function closeModal() {
+        if (activeModal) {
+            activeModal.classList.add('hidden');
+            activeModal = null;
+        }
+    }
 
     // --- Fungsi API dan UI ---
-
     async function fetchRegistrations() {
         try {
             const response = await fetch(`${API_BASE_URL}/statscf/registrations`);
@@ -87,15 +117,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         statsDisplay.innerHTML = '';
         let html = '<h2>Ringkasan Statistik</h2>';
-        if (data.global_stats) {
-            html += `<div class="stat-card"><h3>Statistik Global Akun</h3><p><strong>Total Permintaan:</strong> ${data.global_stats.total_requests.toLocaleString('id-ID')}</p></div>`;
-        }
-        if (data.zone_stats) {
-            html += `<div class="stat-card"><h3>Statistik Zona</h3><p><strong>Total Bandwidth:</strong> ${formatBytes(data.zone_stats.bandwidth_bytes)}</p></div>`;
-        }
-        if (data.worker_stats) {
-            html += `<div class="stat-card"><h3>Statistik Worker</h3><p><strong>Permintaan:</strong> ${data.worker_stats.requests.toLocaleString('id-ID')}</p><p><strong>Sub-Permintaan:</strong> ${data.worker_stats.subrequests.toLocaleString('id-ID')}</p><p><strong>Error:</strong> ${data.worker_stats.errors.toLocaleString('id-ID')}</p><p><strong>CPU Time (P50/P90/P99):</strong> ${data.worker_stats.cpu_time_p50?.toFixed(2)}µs / ${data.worker_stats.cpu_time_p90?.toFixed(2)}µs / ${data.worker_stats.cpu_time_p99?.toFixed(2)}µs</p></div>`;
-        }
+        if (data.global_stats) html += `<div class="stat-card"><h3>Statistik Global Akun</h3><p><strong>Total Permintaan:</strong> ${data.global_stats.total_requests.toLocaleString('id-ID')}</p></div>`;
+        if (data.zone_stats) html += `<div class="stat-card"><h3>Statistik Zona</h3><p><strong>Total Bandwidth:</strong> ${formatBytes(data.zone_stats.bandwidth_bytes)}</p></div>`;
+        if (data.worker_stats) html += `<div class="stat-card"><h3>Statistik Worker</h3><p><strong>Permintaan:</strong> ${data.worker_stats.requests.toLocaleString('id-ID')}</p><p><strong>Sub-Permintaan:</strong> ${data.worker_stats.subrequests.toLocaleString('id-ID')}</p><p><strong>Error:</strong> ${data.worker_stats.errors.toLocaleString('id-ID')}</p><p><strong>CPU Time (P50/P90/P99):</strong> ${data.worker_stats.cpu_time_p50?.toFixed(2)}µs / ${data.worker_stats.cpu_time_p90?.toFixed(2)}µs / ${data.worker_stats.cpu_time_p99?.toFixed(2)}µs</p></div>`;
         statsDisplay.innerHTML = html;
         statsDisplay.classList.remove('hidden');
     }
@@ -129,15 +153,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // --- Logika Modal ---
-    function openModal(modal) { modal.classList.remove('hidden'); }
-    function closeModal(modal) { modal.classList.add('hidden'); }
-
     // --- Logika Form Handlers ---
     async function handleRegistrationSubmit(event) {
         event.preventDefault();
-        registrationModalError.classList.add('hidden');
-        const formData = new FormData(registrationForm);
+        const modal = modals.registration;
+        modal.error.classList.add('hidden');
+        const formData = new FormData(modal.form);
         const data = Object.fromEntries(formData.entries());
         if (!data.cf_worker_name) delete data.cf_worker_name;
         if (!data.cf_zone_id) delete data.cf_zone_id;
@@ -147,20 +168,21 @@ document.addEventListener('DOMContentLoaded', () => {
             const result = await response.json();
             if (!response.ok || !result.success) throw new Error(result.error || 'Terjadi kesalahan.');
             alert('Registrasi berhasil!');
-            closeModal(registrationModal);
+            closeModal();
             fetchRegistrations();
         } catch (error) {
-            registrationModalError.textContent = error.message;
-            registrationModalError.classList.remove('hidden');
+            modal.error.textContent = error.message;
+            modal.error.classList.remove('hidden');
         }
     }
 
     async function handleUpdateSubmit(event) {
         event.preventDefault();
-        updateModalError.classList.add('hidden');
+        const modal = modals.update;
+        modal.error.classList.add('hidden');
         const selectedId = select.value;
         if (!selectedId) return;
-        const formData = new FormData(updateForm);
+        const formData = new FormData(modal.form);
         const data = Object.fromEntries(formData.entries());
         if (!data.cf_worker_name) delete data.cf_worker_name;
         if (!data.cf_zone_id) delete data.cf_zone_id;
@@ -170,32 +192,33 @@ document.addEventListener('DOMContentLoaded', () => {
             const result = await response.json();
             if (!response.ok || !result.success) throw new Error(result.error || 'Gagal memperbarui.');
             alert('Pembaruan berhasil!');
-            closeModal(updateModal);
+            closeModal();
             fetchRegistrations();
         } catch (error) {
-            updateModalError.textContent = error.message;
-            updateModalError.classList.remove('hidden');
+            modal.error.textContent = error.message;
+            modal.error.classList.remove('hidden');
         }
     }
 
     async function handleDeleteSubmit(event) {
         event.preventDefault();
-        deleteModalError.classList.add('hidden');
+        const modal = modals.delete;
+        modal.error.classList.add('hidden');
         const selectedId = select.value;
         if (!selectedId) return;
-        const formData = new FormData(deleteForm);
+        const formData = new FormData(modal.form);
         const data = Object.fromEntries(formData.entries());
         try {
             const response = await fetch(`${API_BASE_URL}/statscf/${selectedId}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cf_api_token: data.cf_api_token }) });
             const result = await response.json();
             if (!response.ok || !result.success) throw new Error(result.error || 'Gagal menghapus.');
             alert('Penghapusan berhasil!');
-            closeModal(deleteModal);
+            closeModal();
             fetchRegistrations();
             statsDisplay.classList.add('hidden');
         } catch (error) {
-            deleteModalError.textContent = error.message;
-            deleteModalError.classList.remove('hidden');
+            modal.error.textContent = error.message;
+            modal.error.classList.remove('hidden');
         }
     }
 
@@ -209,34 +232,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     refreshButton.addEventListener('click', fetchStats);
 
-    addNewButton.addEventListener('click', () => {
-        registrationForm.reset();
-        registrationModalError.classList.add('hidden');
-        openModal(registrationModal);
-    });
-    closeRegistrationModalButton.addEventListener('click', () => closeModal(registrationModal));
-    registrationForm.addEventListener('submit', handleRegistrationSubmit);
+    // Setup listeners untuk setiap modal
+    for (const key in modals) {
+        const modal = modals[key];
+        modal.openButton.addEventListener('click', () => openModal(key));
+        modal.closeButton.addEventListener('click', closeModal);
+        modal.form.addEventListener('submit', modal.submitHandler);
+    }
 
-    editButton.addEventListener('click', () => {
-        updateForm.reset();
-        updateModalError.classList.add('hidden');
-        openModal(updateModal);
-    });
-    closeUpdateModalButton.addEventListener('click', () => closeModal(updateModal));
-    updateForm.addEventListener('submit', handleUpdateSubmit);
-
-    deleteButton.addEventListener('click', () => {
-        deleteForm.reset();
-        deleteModalError.classList.add('hidden');
-        openModal(deleteModal);
-    });
-    closeDeleteModalButton.addEventListener('click', () => closeModal(deleteModal));
-    deleteForm.addEventListener('submit', handleDeleteSubmit);
-
+    // Listener global untuk menutup modal saat mengklik di luar
     window.addEventListener('click', (event) => {
-        if (event.target === registrationModal) closeModal(registrationModal);
-        if (event.target === updateModal) closeModal(updateModal);
-        if (event.target === deleteModal) closeModal(deleteModal);
+        if (event.target.classList.contains('modal')) {
+            closeModal();
+        }
     });
 
     // --- Inisialisasi ---
