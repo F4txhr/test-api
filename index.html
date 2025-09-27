@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dasbor Pemantauan Cloudflare</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>Dasbor Pemantauan Cloudflare</h1>
+    </header>
+    <main>
+        <section class="controls">
+            <label for="registration-select">Pilih Konfigurasi:</label>
+            <select id="registration-select">
+                <option value="">-- Silakan pilih --</option>
+            </select>
+            <button id="refresh-button">Refresh</button>
+            <button id="edit-button" disabled>Edit</button>
+            <button id="delete-button" class="button-danger" disabled>Hapus</button>
+            <button id="add-new-button" class="button-primary">Daftarkan Baru</button>
+        </section>
+        <section id="stats-container">
+            <div id="loading-indicator" class="hidden">Memuat data...</div>
+            <div id="error-message" class="hidden"></div>
+            <div id="stats-display" class="hidden">
+                <!-- Data akan ditampilkan di sini oleh JavaScript -->
+            </div>
+        </section>
+    </main>
+
+    <!-- Modal untuk Pendaftaran Baru -->
+    <div id="registration-modal" class="modal hidden">
+        <div class="modal-content">
+            <span class="close-button">&times;</span>
+            <h2>Daftarkan Konfigurasi Baru</h2>
+            <form id="registration-form">
+                <label for="reg-cf_api_token">Token API Cloudflare:</label>
+                <input type="password" id="reg-cf_api_token" name="cf_api_token" required>
+                <label for="reg-cf_account_id">ID Akun Cloudflare:</label>
+                <input type="text" id="reg-cf_account_id" name="cf_account_id" required>
+                <label for="reg-cf_worker_name">Nama Worker (Opsional):</label>
+                <input type="text" id="reg-cf_worker_name" name="cf_worker_name">
+                <label for="reg-cf_zone_id">ID Zona (Opsional):</label>
+                <input type="text" id="reg-cf_zone_id" name="cf_zone_id">
+                <label for="reg-error_threshold">Ambang Batas Error (Opsional, default: 100):</label>
+                <input type="number" id="reg-error_threshold" name="error_threshold" placeholder="100">
+                <button type="submit">Daftar</button>
+            </form>
+            <div id="modal-error-message" class="hidden"></div>
+        </div>
+    </div>
+
+    <!-- Modal untuk Pembaruan -->
+    <div id="update-modal" class="modal hidden">
+        <div class="modal-content">
+            <span class="close-button">&times;</span>
+            <h2>Perbarui Konfigurasi</h2>
+            <form id="update-form">
+                <p>Isi hanya field yang ingin Anda ubah.</p>
+                <label for="update-cf_worker_name">Nama Worker Baru:</label>
+                <input type="text" id="update-cf_worker_name" name="cf_worker_name">
+                <label for="update-cf_zone_id">ID Zona Baru:</label>
+                <input type="text" id="update-cf_zone_id" name="cf_zone_id">
+                <label for="update-error_threshold">Ambang Batas Error Baru:</label>
+                <input type="number" id="update-error_threshold" name="error_threshold">
+                <button type="submit">Perbarui</button>
+            </form>
+            <div id="update-modal-error-message" class="hidden"></div>
+        </div>
+    </div>
+
+    <!-- Modal untuk Konfirmasi Penghapusan -->
+    <div id="delete-modal" class="modal hidden">
+        <div class="modal-content">
+            <span class="close-button">&times;</span>
+            <h2>Konfirmasi Penghapusan</h2>
+            <form id="delete-form">
+                <p>Anda yakin ingin menghapus konfigurasi ini? Tindakan ini tidak dapat diurungkan.</p>
+                <p>Untuk mengonfirmasi, masukkan kembali Token API Cloudflare Anda.</p>
+                <label for="delete-cf_api_token">Token API Cloudflare:</label>
+                <input type="password" id="delete-cf_api_token" name="cf_api_token" required>
+                <button type="submit" class="button-danger">Hapus Permanen</button>
+            </form>
+            <div id="delete-modal-error-message" class="hidden"></div>
+        </div>
+    </div>
+
+    <footer>
+        <p>Dibuat untuk memantau API Anda</p>
+    </footer>
+    <script src="script.js"></script>
+</body>
+</html>
