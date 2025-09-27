@@ -221,9 +221,9 @@ document.addEventListener('DOMContentLoaded', () => {
     deleteButton.addEventListener('click', () => openModal('delete'));
 
     // Listeners untuk menutup modal (tombol X)
-    document.querySelector('#registration-modal .close-button').addEventListener('click', closeAllModals);
-    document.querySelector('#update-modal .close-button').addEventListener('click', closeAllModals);
-    document.querySelector('#delete-modal .close-button').addEventListener('click', closeAllModals);
+    document.querySelectorAll('.close-button').forEach(button => {
+        button.addEventListener('click', closeAllModals);
+    });
 
     // Listeners untuk submit form
     document.getElementById('registration-form').addEventListener('submit', handleRegistrationSubmit);
@@ -238,6 +238,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // --- Inisialisasi ---
+    closeAllModals(); // Pastikan semua modal tersembunyi saat aplikasi dimuat
     fetchRegistrations();
     setInterval(pingServer, 5 * 60 * 1000);
 });
