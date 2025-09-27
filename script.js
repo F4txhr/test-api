@@ -160,11 +160,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!selectedId) return;
         const formData = new FormData(event.target);
         const data = Object.fromEntries(formData.entries());
+
+        // Hapus field kosong agar tidak menimpa data yang ada dengan null
         if (!data.cf_worker_name) delete data.cf_worker_name;
         if (!data.cf_zone_id) delete data.cf_zone_id;
         if (!data.error_threshold) delete data.error_threshold;
+
         try {
-            const response = await fetch(`${API_BASE_URL}/statscf/${selectedId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+            const response = await fetch(`${API_BASE_URL}/statscf/${selectedId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data) // Token API sudah termasuk dari form
+            });
             const result = await response.json();
             if (!response.ok || !result.success) throw new Error(result.error || 'Gagal memperbarui.');
             alert('Pembaruan berhasil!');
