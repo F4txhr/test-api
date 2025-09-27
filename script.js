@@ -29,18 +29,48 @@ document.addEventListener('DOMContentLoaded', () => {
     modals[key].classList.remove('hidden');
   }
 
+  // --- Fungsi Helper ---
+  const delay = ms => new Promise(res => setTimeout(res, ms));
+
+  async function fetchWithRetry(url, retries = 3, delayMs = 2000) {
+    for (let i = 0; i < retries; i++) {
+      try {
+        const res = await fetch(url);
+        if (!res.headers.get('content-type')?.includes('application/json')) {
+          throw new Error(`Respons server tidak valid (percobaan ${i + 1}/${retries})`);
+        }
+        if (!res.ok) {
+          const errorData = await res.json();
+          throw new Error(errorData.error || `Error HTTP: ${res.status}`);
+        }
+        return await res.json(); // Berhasil
+      } catch (e) {
+        console.error(e.message);
+        if (i < retries - 1) {
+          showLoading(true, `Menghubungi server... (${i + 2}/${retries})`);
+          await delay(delayMs);
+        } else {
+          throw e; // Gagal setelah semua percobaan
+        }
+      }
+    }
+  }
+
   // Fetch daftar
   async function fetchRegistrations() {
+    showLoading(true, "Menghubungi server... (1/3)");
     try {
-      const res = await fetch(`${API_BASE_URL}/statscf/registrations`);
-      if (!res.headers.get('content-type')?.includes('application/json')) {
-        throw new Error("Respons server tidak valid. Coba lagi nanti.");
+      const data = await fetchWithRetry(`${API_BASE_URL}/statscf/registrations`);
+      if (data.success) {
+        populateSelect(data.data);
+      } else {
+        // Jika API mengembalikan success: false
+        throw new Error(data.error || "Gagal mengambil daftar registrasi.");
       }
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || "Gagal ambil daftar.");
-      populateSelect(data.data);
     } catch (e) {
       showError(e.message);
+    } finally {
+      showLoading(false);
     }
   }
 
@@ -107,7 +137,8 @@ document.addEventListener('DOMContentLoaded', () => {
     return (b/Math.pow(k,i)).toFixed(2) + " " + sizes[i];
   }
 
-  function showLoading(x) {
+  function showLoading(x, message = "Memuat data...") {
+    loading.textContent = message;
     loading.classList.toggle('hidden', !x);
     if (x) statsDisplay.classList.add('hidden');
   }
