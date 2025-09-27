@@ -1,6 +1,18 @@
 const fetch = require('node-fetch');
 const { v4: uuidv4 } = require('uuid');
-const { addCloudflareConfig, getCloudflareConfig } = require('./database');
+const {
+  addCloudflareConfig,
+  getCloudflareConfig,
+  getRawCloudflareConfig,
+  updateCloudflareConfig,
+  deleteCloudflareConfig,
+  decrypt,
+  addWorkerStats,
+  getWorkerStats,
+  findExistingConfig,
+  getAllRegistrations,
+} = require('./database');
+const { sendTelegramAlert } = require('./telegram');
 
 const BROWSER_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36';
 
@@ -68,26 +80,49 @@ async function verifyCloudflareCredentials(api_token, account_id, { zone_id, wor
 
 // --- Registration Handler ---
 async function handleRegistration(req, res) {
-  const { cf_api_token, cf_account_id, cf_zone_id, cf_worker_name } = req.body;
+  const { cf_api_token, cf_account_id, cf_zone_id, cf_worker_name, error_threshold } = req.body;
 
+  // 1. Validasi Input Dasar
   if (!cf_api_token || !cf_account_id) {
     return res.status(400).json({
       success: false,
-      error: 'Missing required fields: cf_api_token, cf_account_id',
+      error: 'Field `cf_api_token` dan `cf_account_id` wajib diisi.',
     });
   }
 
+  // Memastikan setidaknya salah satu (zona atau worker) disediakan
   if (!cf_zone_id && !cf_worker_name) {
     return res.status(400).json({
       success: false,
-      error: 'Please provide either cf_zone_id or cf_worker_name',
+      error: 'Harap sediakan `cf_zone_id` (untuk pemantauan bandwidth) atau `cf_worker_name` (untuk pemantauan worker).',
     });
   }
 
-  // Verification is temporarily disabled. It will be performed when data is requested.
-  // Generate a unique ID and save to the database
+  // 2. Pemeriksaan Duplikat
+  const existingConfig = findExistingConfig({ account_id: cf_account_id, zone_id: cf_zone_id, worker_name: cf_worker_name });
+  if (existingConfig) {
+    const { type, id } = existingConfig;
+    const resourceName = type === 'worker' ? `Worker "${cf_worker_name}"` : `Zone ID "${cf_zone_id}"`;
+    return res.status(409).json({ // 409 Conflict
+      success: false,
+      error: `Konfigurasi duplikat: ${resourceName} sudah terdaftar untuk akun ini dengan ID unik: ${id}.`,
+      existing_unique_id: id,
+    });
+  }
+
+  // 3. Verifikasi Kredensial dengan Cloudflare
+  const verification = await verifyCloudflareCredentials(cf_api_token, cf_account_id, { zone_id: cf_zone_id, worker_name: cf_worker_name });
+  if (!verification.success) {
+    return res.status(403).json({ success: false, error: `Verifikasi Cloudflare gagal: ${verification.error}` });
+  }
+
+  // 4. Buat Konfigurasi Baru
   const unique_id = uuidv4();
-  const dbResult = addCloudflareConfig(unique_id, cf_api_token, cf_account_id, { zone_id: cf_zone_id, worker_name: cf_worker_name });
+  const dbResult = addCloudflareConfig(unique_id, cf_api_token, cf_account_id, {
+    zone_id: cf_zone_id,
+    worker_name: cf_worker_name,
+    error_threshold: error_threshold
+  });
 
   if (!dbResult.success) {
     return res.status(500).json({ success: false, error: dbResult.error });
@@ -95,45 +130,60 @@ async function handleRegistration(req, res) {
 
   res.status(201).json({
     success: true,
-    message: 'Successfully registered. Use this ID to access your stats.',
+    message: 'Registrasi berhasil. Gunakan ID unik ini untuk mengakses statistik Anda.',
     unique_id: unique_id,
   });
 }
 
-// --- GraphQL Queries for Cloudflare Analytics ---
-function getZoneAnalyticsQuery(zone_id, since, until) {
-  return `
-    query {
-      viewer {
-        zones(filter: { zoneTag: "${zone_id}" }) {
-          httpRequestsAdaptiveGroups(
-            filter: { date_geq: "${since}", date_lt: "${until}" },
-            limit: 1
-          ) {
-            sum { requests, bytes }
-          }
-        }
-      }
+// --- GraphQL Query Builder ---
+function getComprehensiveAnalyticsQuery(config, since, until) {
+  const { cf_account_id, cf_zone_id, cf_worker_name } = config;
+
+  // Bagian kueri untuk statistik global akun (selalu ada)
+  const accountGlobalStats = `
+    accountRequests: httpRequests1dGroups(
+      limit: 1,
+      filter: { date_geq: "${since}", date_lt: "${until}" }
+    ) {
+      sum { requests }
     }
   `;
-}
 
-function getWorkerAnalyticsQuery(account_id, worker_name, since, until) {
+  // Bagian kueri untuk statistik zona (jika zone_id ada)
+  const zoneStats = cf_zone_id ? `
+    zone: zones(filter: { zoneTag: "${cf_zone_id}" }) {
+      zoneBandwidth: httpRequestsAdaptiveGroups(
+        filter: { date_geq: "${since}", date_lt: "${until}" },
+        limit: 1
+      ) {
+        sum { edgeResponseBytes }
+      }
+    }
+  ` : '';
+
+  // Bagian kueri untuk statistik worker (jika worker_name ada)
+  const workerStats = cf_worker_name ? `
+    workerInvocations: workersInvocationsAdaptive(
+      filter: {
+        datetime_geq: "${since}T00:00:00Z",
+        datetime_lt: "${until}T00:00:00Z",
+        scriptName: "${cf_worker_name}"
+      },
+      limit: 1
+    ) {
+      sum { requests, subrequests, errors }
+      quantiles { cpuTimeP50, cpuTimeP90, cpuTimeP99 }
+    }
+  ` : '';
+
+  // Gabungkan semua bagian menjadi satu kueri
   return `
     query {
       viewer {
-        accounts(filter: { accountTag: "${account_id}" }) {
-          workersInvocationsAdaptive(
-            filter: {
-              datetime_geq: "${since}T00:00:00Z",
-              datetime_lt: "${until}T00:00:00Z",
-              scriptName: "${worker_name}"
-            },
-            limit: 1
-          ) {
-            sum { requests, subrequests, errors }
-            quantiles { cpuTimeP50, cpuTimeP90, cpuTimeP99 }
-          }
+        accounts(filter: { accountTag: "${cf_account_id}" }) {
+          ${accountGlobalStats}
+          ${workerStats}
+          ${zoneStats}
         }
       }
     }
@@ -143,6 +193,8 @@ function getWorkerAnalyticsQuery(account_id, worker_name, since, until) {
 // --- Data Fetching Handler ---
 async function handleDataRequest(req, res) {
   const { id } = req.params;
+  const { since, until } = req.query;
+
   if (!id) {
     return res.status(400).json({ success: false, error: 'Missing unique ID.' });
   }
@@ -152,66 +204,128 @@ async function handleDataRequest(req, res) {
     return res.status(404).json({ success: false, error: 'ID not found.' });
   }
 
-  const now = new Date();
-  const today = now.toISOString().slice(0, 10);
-  const tomorrow = new Date(now);
+  const today = new Date().toISOString().slice(0, 10);
+
+  // --- Logika Histori (Hanya Worker) ---
+  if (since && until && until < today) {
+    if (!config.cf_worker_name) {
+      return res.status(400).json({ success: false, error: 'Historical data is only available for workers.' });
+    }
+
+    const dailyData = getWorkerStats(config.id, since, until);
+
+    if (dailyData.length === 0) {
+      return res.status(200).json({
+        success: true,
+        data_source: 'database_history',
+        period: { since, until },
+        data: { summary: {}, daily_data: [] }
+      });
+    }
+
+    const summary = dailyData.reduce((acc, day) => {
+      acc.total_requests += day.requests || 0;
+      acc.total_subrequests += day.subrequests || 0;
+      acc.total_errors += day.errors || 0;
+      acc.sum_cpu_p50 += day.cpu_time_p50 || 0;
+      acc.sum_cpu_p90 += day.cpu_time_p90 || 0;
+      acc.sum_cpu_p99 += day.cpu_time_p99 || 0;
+      return acc;
+    }, {
+      total_requests: 0, total_subrequests: 0, total_errors: 0,
+      sum_cpu_p50: 0, sum_cpu_p90: 0, sum_cpu_p99: 0
+    });
+
+    const dayCount = dailyData.length;
+    summary.average_cpu_p50 = summary.sum_cpu_p50 / dayCount;
+    summary.average_cpu_p90 = summary.sum_cpu_p90 / dayCount;
+    summary.average_cpu_p99 = summary.sum_cpu_p99 / dayCount;
+
+    delete summary.sum_cpu_p50;
+    delete summary.sum_cpu_p90;
+    delete summary.sum_cpu_p99;
+
+    return res.status(200).json({
+      success: true,
+      data_source: 'database_history',
+      period: { since, until },
+      data: { summary, daily_data: dailyData },
+    });
+  }
+
+  // --- Pengambilan Data Langsung dari API ---
+  const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   const tomorrowStr = tomorrow.toISOString().slice(0, 10);
 
-  let query;
-  if (config.cf_zone_id) {
-    query = getZoneAnalyticsQuery(config.cf_zone_id, today, tomorrowStr);
-  } else if (config.cf_worker_name) {
-    query = getWorkerAnalyticsQuery(config.cf_account_id, config.cf_worker_name, today, tomorrowStr);
-  } else {
-    return res.status(500).json({ success: false, error: 'Invalid configuration found.' });
-  }
+  const query = getComprehensiveAnalyticsQuery(config, today, tomorrowStr);
 
   try {
     const response = await fetch('https://api.cloudflare.com/client/v4/graphql', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.cf_api_token}`,
-        'User-Agent': BROWSER_USER_AGENT
-      },
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${config.cf_api_token}` },
       body: JSON.stringify({ query }),
     });
 
-    const data = await response.json();
-
-    if (data.errors) {
-      console.error('Cloudflare API Error:', data.errors);
-      return res.status(500).json({ success: false, error: 'Failed to fetch data from Cloudflare.' });
+    const result = await response.json();
+    if (result.errors) {
+      console.error('Cloudflare API Error:', JSON.stringify(result.errors, null, 2));
+      return res.status(500).json({
+        success: false,
+        error: 'Gagal mengambil data dari Cloudflare. Cek log server untuk detail teknis.'
+      });
     }
 
-    let responseData;
-    if (config.cf_zone_id) {
-      const analytics = data.data.viewer.zones[0].httpRequestsAdaptiveGroups[0]?.sum || { requests: 0, bytes: 0 };
-      responseData = {
-        type: 'zone',
-        zone_id: config.cf_zone_id,
-        total_requests_today: analytics.requests,
-        total_bandwidth_today_bytes: analytics.bytes,
+    const accountData = result.data.viewer.accounts[0] || {};
+    const zoneData = accountData.zone ? accountData.zone[0] : null; // Ambil data zona dari dalam akun
+
+    // Inisialisasi objek respons
+    const responseData = {
+      global_stats: {
+        total_requests: accountData.accountRequests?.[0]?.sum?.requests || 0,
+      },
+    };
+
+    // Tambahkan data zona jika ada
+    if (config.cf_zone_id && zoneData.zoneBandwidth) {
+      responseData.zone_stats = {
+        bandwidth_bytes: zoneData.zoneBandwidth[0]?.sum?.edgeResponseBytes || 0,
       };
-    } else {
-      const invocation = data.data.viewer.accounts[0].workersInvocationsAdaptive[0] || {};
-      const sum = invocation.sum || { requests: 0, subrequests: 0, errors: 0 };
-      const quantiles = invocation.quantiles || { cpuTimeP50: null, cpuTimeP90: null, cpuTimeP99: null };
-      responseData = {
-        type: 'worker',
-        worker_name: config.cf_worker_name,
-        total_requests_today: sum.requests,
-        total_subrequests_today: sum.subrequests,
-        total_errors_today: sum.errors,
+    }
+
+    // Tambahkan data worker jika ada
+    if (config.cf_worker_name && accountData.workerInvocations) {
+      const invocation = accountData.workerInvocations[0] || {};
+      const sum = invocation.sum || {};
+      const quantiles = invocation.quantiles || {};
+
+      const workerStats = {
+        requests: sum.requests || 0,
+        subrequests: sum.subrequests || 0,
+        errors: sum.errors || 0,
         cpu_time_p50: quantiles.cpuTimeP50,
         cpu_time_p90: quantiles.cpuTimeP90,
         cpu_time_p99: quantiles.cpuTimeP99,
-        note: 'Bandwidth data is not available for worker-level analytics. CPU time is reported in microseconds (µs).',
       };
+      responseData.worker_stats = workerStats;
+
+      // Simpan histori & kirim notifikasi untuk worker
+      addWorkerStats(config.id, today, workerStats);
+
+      // Gunakan ambang batas dari database, dengan fallback ke 100 jika tidak ada
+      const errorThreshold = config.error_threshold || 100;
+      if (workerStats.errors > errorThreshold) {
+        const message = `Worker "${config.cf_worker_name}" telah mencatat ${workerStats.errors} error hari ini, melebihi ambang batas (${errorThreshold}).`;
+        sendTelegramAlert(message, true);
+      }
     }
 
-    res.status(200).json({ success: true, data: responseData });
+    res.status(200).json({
+      success: true,
+      data_source: 'cloudflare_api',
+      period: { since: today, until: today },
+      data: [responseData],
+    });
 
   } catch (error) {
     console.error('Error fetching Cloudflare data:', error);
@@ -220,7 +334,102 @@ async function handleDataRequest(req, res) {
 }
 
 
+// --- Deletion Handler ---
+async function handleDeleteRegistration(req, res) {
+  const { id } = req.params;
+  const { cf_api_token } = req.body;
+
+  if (!id) {
+    return res.status(400).json({ success: false, error: 'Missing unique ID.' });
+  }
+  if (!cf_api_token) {
+    return res.status(400).json({ success: false, error: 'Missing cf_api_token for verification.' });
+  }
+
+  // 1. Get the raw config with the encrypted token
+  const rawConfig = getRawCloudflareConfig(id);
+  if (!rawConfig) {
+    return res.status(404).json({ success: false, error: 'ID not found.' });
+  }
+
+  // 2. Decrypt the stored token
+  const storedToken = decrypt(rawConfig.cf_api_token);
+
+  // 3. Securely compare the provided token with the decrypted stored token
+  if (storedToken !== cf_api_token) {
+    return res.status(403).json({ success: false, error: 'Invalid API token. Deletion denied.' });
+  }
+
+  // 4. Proceed with deletion if tokens match
+  const result = deleteCloudflareConfig(id);
+
+  if (result.success) {
+    res.status(200).json({ success: true, message: 'Registration and all associated data deleted successfully.' });
+  } else {
+    res.status(500).json({ success: false, error: result.error || 'Failed to delete registration.' });
+  }
+}
+
+// --- Update Handler ---
+async function handleUpdateRegistration(req, res) {
+  const { id } = req.params;
+  const { cf_zone_id, cf_worker_name, error_threshold } = req.body;
+
+  if (!cf_zone_id && !cf_worker_name && error_threshold === undefined) {
+    return res.status(400).json({
+      success: false,
+      error: 'Harap sediakan `cf_zone_id`, `cf_worker_name`, atau `error_threshold` untuk diperbarui.',
+    });
+  }
+
+  // Ambil konfigurasi yang ada untuk mendapatkan token dan ID akun
+  const config = getCloudflareConfig(id);
+  if (!config) {
+    return res.status(404).json({ success: false, error: 'ID tidak ditemukan.' });
+  }
+
+  // Verifikasi hanya jika zona atau worker diubah
+  if (cf_zone_id || cf_worker_name) {
+    const verification = await verifyCloudflareCredentials(config.cf_api_token, config.cf_account_id, { zone_id: cf_zone_id, worker_name: cf_worker_name });
+    if (!verification.success) {
+      return res.status(403).json({ success: false, error: `Verifikasi Cloudflare gagal: ${verification.error}` });
+    }
+  }
+
+  // Lakukan pembaruan di database
+  const result = updateCloudflareConfig(id, { zone_id: cf_zone_id, worker_name: cf_worker_name, error_threshold: error_threshold });
+
+  if (result.success) {
+    res.status(200).json({ success: true, message: 'Konfigurasi berhasil diperbarui.' });
+  } else {
+    res.status(500).json({ success: false, error: result.error || 'Gagal memperbarui konfigurasi.' });
+  }
+}
+
+// --- Get All Registrations Handler ---
+function handleGetAllRegistrations(req, res) {
+  const registrations = getAllRegistrations();
+  // Buat nama yang lebih ramah untuk setiap pendaftaran
+  const formattedRegistrations = registrations.map(reg => {
+    let name = reg.cf_worker_name || reg.cf_zone_id || reg.unique_id;
+    if (reg.cf_worker_name && reg.cf_zone_id) {
+      name = `${reg.cf_worker_name} & ${reg.cf_zone_id}`;
+    }
+    return {
+      unique_id: reg.unique_id,
+      name: name
+    };
+  });
+  res.status(200).json({
+    success: true,
+    data: formattedRegistrations,
+  });
+}
+
 module.exports = {
   handleRegistration,
   handleDataRequest,
+  handleUpdateRegistration,
+  handleDeleteRegistration,
+  handleGetAllRegistrations,
 };

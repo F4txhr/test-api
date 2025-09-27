@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dasbor Pemantauan Cloudflare</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>Dasbor Pemantauan Cloudflare</h1>
+    </header>
+    <main>
+        <section class="controls">
+            <label for="registration-select">Pilih Konfigurasi:</label>
+            <select id="registration-select">
+                <option value="">-- Silakan pilih --</option>
+            </select>
+            <button id="refresh-button">Refresh Data</button>
+        </section>
+        <section id="stats-container">
+            <div id="loading-indicator" class="hidden">Memuat data...</div>
+            <div id="error-message" class="hidden"></div>
+            <div id="stats-display" class="hidden">
+                <!-- Data akan ditampilkan di sini oleh JavaScript -->
+            </div>
+        </section>
+    </main>
+    <footer>
+        <p>Dibuat untuk memantau API Anda</p>
+    </footer>
+    <script src="script.js"></script>
+</body>
+</html>
