@@ -33,6 +33,9 @@ document.addEventListener('DOMContentLoaded', () => {
   async function fetchRegistrations() {
     try {
       const res = await fetch(`${API_BASE_URL}/statscf/registrations`);
+      if (!res.headers.get('content-type')?.includes('application/json')) {
+        throw new Error("Respons server tidak valid. Coba lagi nanti.");
+      }
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || "Gagal ambil daftar.");
       populateSelect(data.data);
@@ -59,6 +62,9 @@ document.addEventListener('DOMContentLoaded', () => {
     showLoading(true);
     try {
       const res = await fetch(`${API_BASE_URL}/statscf/data/${select.value}`);
+      if (!res.headers.get('content-type')?.includes('application/json')) {
+        throw new Error("Respons server tidak valid. Coba lagi nanti.");
+      }
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || "Gagal ambil statistik.");
       displayStats(data.data[0]);
@@ -120,6 +126,9 @@ document.addEventListener('DOMContentLoaded', () => {
         method: 'POST', headers: {'Content-Type':'application/json'},
         body: JSON.stringify(data)
       });
+      if (!res.headers.get('content-type')?.includes('application/json')) {
+        throw new Error("Respons server tidak valid. Coba lagi nanti.");
+      }
       const out = await res.json();
       if (!res.ok || !out.success) throw new Error(out.error || "Gagal daftar.");
       closeAllModals(); fetchRegistrations();
@@ -144,6 +153,9 @@ document.addEventListener('DOMContentLoaded', () => {
         method: 'PUT', headers: {'Content-Type':'application/json'},
         body: JSON.stringify(data)
       });
+      if (!res.headers.get('content-type')?.includes('application/json')) {
+        throw new Error("Respons server tidak valid. Coba lagi nanti.");
+      }
       const out = await res.json();
       if (!res.ok || !out.success) throw new Error(out.error || "Gagal update.");
       closeAllModals(); fetchRegistrations();
@@ -162,6 +174,9 @@ document.addEventListener('DOMContentLoaded', () => {
         method: 'DELETE', headers: {'Content-Type':'application/json'},
         body: JSON.stringify({cf_api_token:data.cf_api_token})
       });
+      if (!res.headers.get('content-type')?.includes('application/json')) {
+        throw new Error("Respons server tidak valid. Coba lagi nanti.");
+      }
       const out = await res.json();
       if (!res.ok || !out.success) throw new Error(out.error || "Gagal hapus.");
       closeAllModals(); fetchRegistrations(); statsDisplay.classList.add('hidden');
