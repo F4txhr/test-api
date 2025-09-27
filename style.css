@@ -237,7 +237,7 @@ form button:hover {
     background-color: var(--secondary-color);
 }
 
-#modal-error-message {
+.modal-error-message {
     margin-top: 1rem;
     color: var(--error-color);
     background-color: var(--error-bg-color);
