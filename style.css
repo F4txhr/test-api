@@ -54,6 +54,23 @@ main {
 }
 .btn:hover { background: var(--primary); }
 .btn-primary { background: var(--primary); }
+
+#api-status-indicator {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background-color: #ffc107; /* Oranye saat mengecek */
+  transition: background-color 0.5s;
+  vertical-align: middle;
+  margin-left: 8px;
+}
+#api-status-indicator.ok {
+  background-color: #28a745; /* Hijau */
+}
+#api-status-indicator.error {
+  background-color: #dc3545; /* Merah */
+}
 .btn-danger { background: var(--danger); }
 .btn-danger:hover { background: var(--danger-hover); }
 

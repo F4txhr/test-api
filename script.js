@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const editBtn = document.getElementById('edit-button');
   const delBtn = document.getElementById('delete-button');
   const historyBtn = document.getElementById('history-button');
+  const apiStatusIndicator = document.getElementById('api-status-indicator');
   const statsDisplay = document.getElementById('stats-display');
   const loading = document.getElementById('loading-indicator');
   const errorBox = document.getElementById('error-message');
@@ -164,7 +165,26 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       const out = await res.json();
       if (!res.ok || !out.success) throw new Error(out.error || "Gagal daftar.");
-      closeAllModals(); fetchRegistrations();
+
+      // Logika baru: tambahkan ke dropdown secara manual
+      closeAllModals();
+      const newId = out.unique_id;
+      const newName = data.cf_worker_name || data.cf_zone_id || 'Konfigurasi Baru';
+
+      // Hapus placeholder jika ini item pertama
+      if (select.options.length === 1 && select.options[0].value === '') {
+        select.remove(0);
+      }
+
+      const option = document.createElement('option');
+      option.value = newId;
+      option.textContent = newName;
+      select.appendChild(option);
+
+      // Pilih item baru dan picu event untuk memuat datanya
+      select.value = newId;
+      select.dispatchEvent(new Event('change'));
+
     } catch (err) {
       document.getElementById('modal-error-message').textContent = err.message;
       document.getElementById('modal-error-message').classList.remove('hidden');
@@ -191,7 +211,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       const out = await res.json();
       if (!res.ok || !out.success) throw new Error(out.error || "Gagal update.");
-      closeAllModals(); fetchRegistrations();
+      // Cukup tutup modal, tidak perlu fetch ulang karena nama di dropdown tidak berubah
+      closeAllModals();
     } catch (err) {
       const box = document.getElementById('update-modal-error-message');
       box.textContent = err.message; box.classList.remove('hidden');
@@ -291,7 +312,23 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       const out = await res.json();
       if (!res.ok || !out.success) throw new Error(out.error || "Gagal hapus.");
-      closeAllModals(); fetchRegistrations(); statsDisplay.classList.add('hidden');
+
+      // Logika baru: hapus dari dropdown secara manual
+      closeAllModals();
+      const selectedOption = select.options[select.selectedIndex];
+      if (selectedOption) {
+        select.removeChild(selectedOption);
+      }
+      statsDisplay.classList.add('hidden');
+
+      // Jika dropdown kosong, tambahkan placeholder kembali
+      if (select.options.length === 0) {
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = '-- Daftarkan konfigurasi baru untuk memulai --';
+        select.appendChild(placeholder);
+        select.dispatchEvent(new Event('change')); // Picu event untuk menonaktifkan tombol
+      }
     } catch (err) {
       const box = document.getElementById('delete-modal-error-message');
       box.textContent = err.message; box.classList.remove('hidden');
@@ -314,8 +351,25 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.close-button').forEach(btn => btn.addEventListener('click', closeAllModals));
   window.addEventListener('click', e => { if (e.target.classList.contains('modal')) closeAllModals(); });
 
+  async function checkApiStatus() {
+    try {
+      const res = await fetch(`${API_BASE_URL}/ping`);
+      if (res.ok) {
+        apiStatusIndicator.classList.remove('error');
+        apiStatusIndicator.classList.add('ok');
+        apiStatusIndicator.title = 'API Aktif';
+      } else {
+        throw new Error('Status API tidak OK');
+      }
+    } catch (error) {
+      apiStatusIndicator.classList.remove('ok');
+      apiStatusIndicator.classList.add('error');
+      apiStatusIndicator.title = 'API tidak dapat dihubungi';
+    }
+  }
+
   // Init
   closeAllModals();
-  fetchRegistrations();
-  setInterval(()=>fetch(`${API_BASE_URL}/ping`).catch(()=>{}), 5*60*1000);
+  checkApiStatus(); // Cek status saat pertama kali dimuat
+  setInterval(checkApiStatus, 2 * 60 * 1000); // Cek status setiap 2 menit
 });
