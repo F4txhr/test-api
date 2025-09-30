@@ -184,7 +184,7 @@ function parseVMess(link) {
       alterId: parseInt(obj.aid, 10) || 0,
       security: obj.sc || obj.cipher || 'auto',
       network: obj.net || 'tcp',
-      type: obj.type || 'none',
+      headerType: obj.type || 'none',
       path: obj.path || (obj.net === 'ws' ? '/' : ''),
       host_header: obj.host || obj.add,
       sni: obj.sni || obj.host || obj.add,
@@ -397,6 +397,8 @@ function toClash(config) {
         if (config.host_header) {
           clashConfig['ws-headers'] = { host: config.host_header };
         }
+      } else if (config.network === 'tcp') {
+        clashConfig.network = 'tcp';
       }
       break;
 
@@ -416,6 +418,8 @@ function toClash(config) {
         if (config.host_header) {
           clashConfig['ws-headers'] = { host: config.host_header };
         }
+      } else if (config.network === 'tcp') {
+        clashConfig.network = 'tcp';
       }
       break;
 
@@ -425,12 +429,17 @@ function toClash(config) {
       if (config.sni) clashConfig.sni = config.sni;
       if (config.alpn) clashConfig.alpn = config.alpn.split(',').map(a => a.trim());
       if (config.fp) clashConfig.fingerprint = config.fp;
+
+      // Explicitly handle network type
       if (config.network === 'ws') {
         clashConfig.network = 'ws';
         clashConfig['ws-path'] = config.path || '/';
         if (config.host_header) {
           clashConfig['ws-headers'] = { host: config.host_header };
         }
+      } else if (config.network === 'tcp') {
+        // This was the missing piece for the test to pass.
+        clashConfig.network = 'tcp';
       }
       break;
 
@@ -972,4 +981,12 @@ module.exports = {
   handleRawPostRequest,
   getTemplateInfo,
   parseTrojan,
+  parseVLESS,
+  parseVMess,
+  parseSS,
+  parseAnyLink,
+  toClash,
+  toSurge,
+  toQuantumult,
+  toSingBox,
 };
