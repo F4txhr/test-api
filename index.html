@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Monitoring Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <header>
+        <h1>API Monitoring Dashboard</h1>
+    </header>
+
+    <main>
+        <!-- General API Stats Section -->
+        <section id="general-stats" class="card-container">
+            <h2>General Status</h2>
+            <div class="card" id="ping-status">
+                <h3>Ping</h3>
+                <p>Status: <span id="ping-status-val">...</span></p>
+                <p>Uptime: <span id="ping-uptime-val">...</span></p>
+            </div>
+            <div class="card" id="api-stats">
+                <h3>API Stats</h3>
+                <p>Total Requests: <span id="stats-total-req-val">...</span></p>
+                <p>Success Rate: <span id="stats-success-rate-val">...</span></p>
+            </div>
+        </section>
+
+        <!-- Cloudflare Stats Section -->
+        <section id="cloudflare-section">
+            <h2>Cloudflare Analytics</h2>
+
+            <!-- Registration Form -->
+            <div id="cf-registration" class="card">
+                <h3>Register New Cloudflare Account</h3>
+                <form id="register-form">
+                    <input type="text" id="cf-api-token" placeholder="Cloudflare API Token" required>
+                    <input type="text" id="cf-account-id" placeholder="Cloudflare Account ID" required>
+                    <input type="text" id="cf-zone-id" placeholder="Cloudflare Zone ID (Optional)">
+                    <input type="text" id="cf-worker-name" placeholder="Cloudflare Worker Name (Optional)">
+                    <button type="submit">Register</button>
+                </form>
+                <div id="register-response" class="response-message"></div>
+            </div>
+
+            <!-- Monitoring Form -->
+            <div id="cf-monitoring" class="card">
+                <h3>Monitor Existing Account</h3>
+                <form id="monitor-form">
+                    <input type="text" id="monitor-unique-id" placeholder="Enter your Unique ID">
+                    <button type="submit">Load Stats</button>
+                </form>
+                 <div class="stored-ids-container">
+                    <p>Recently used IDs:</p>
+                    <div id="stored-ids"></div>
+                </div>
+            </div>
+
+            <!-- Cloudflare Data Display -->
+            <div id="cf-data-display" class="card-container">
+                 <div id="cf-stats-placeholder" class="placeholder">
+                    <p>Enter a Unique ID to view Cloudflare stats here.</p>
+                </div>
+                <!-- Data will be dynamically inserted here -->
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>Dashboard created by Jules</p>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
