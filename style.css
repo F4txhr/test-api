@@ -237,6 +237,18 @@ canvas {
     max-height: 300px;
 }
 
+/* Metrics Preformatted Text */
+#metrics-val {
+    background-color: #2c2c2c;
+    padding: 1rem;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font-size: 0.85em;
+    color: var(--on-surface-secondary-color);
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
     main {

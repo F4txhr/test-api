@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const pingUptimeEl = document.getElementById('ping-uptime-val');
     const totalRequestsEl = document.getElementById('stats-total-req-val');
     const successRateEl = document.getElementById('stats-success-rate-val');
+    const metricsEl = document.getElementById('metrics-val');
 
     // CF Registration
     const registerForm = document.getElementById('register-form');
@@ -18,6 +19,20 @@ document.addEventListener('DOMContentLoaded', () => {
     const cfDataDisplayEl = document.getElementById('cf-data-display');
     const storedIdsContainer = document.getElementById('stored-ids');
 
+    let uptimeInterval = null;
+
+    // --- Helper Functions ---
+    function formatUptime(totalSeconds) {
+        const days = Math.floor(totalSeconds / 86400);
+        totalSeconds %= 86400;
+        const hours = Math.floor(totalSeconds / 3600);
+        totalSeconds %= 3600;
+        const minutes = Math.floor(totalSeconds / 60);
+        const seconds = Math.floor(totalSeconds % 60);
+
+        return `${days}d ${hours}h ${minutes}m ${seconds}s`;
+    }
+
     // --- API Fetch Functions ---
 
     // Fetch general API stats (/ping and /stats)
@@ -28,17 +43,34 @@ document.addEventListener('DOMContentLoaded', () => {
             const pingData = await pingRes.json();
             pingStatusEl.textContent = pingData.status;
             pingStatusEl.className = pingData.status === 'Alive' ? 'status-up' : 'status-down';
-            pingUptimeEl.textContent = `${pingData.uptime_seconds}s`;
+
+            // Start the realtime uptime counter
+            if (uptimeInterval) clearInterval(uptimeInterval);
+            let currentUptime = pingData.uptime_seconds;
+            pingUptimeEl.textContent = formatUptime(currentUptime);
+            uptimeInterval = setInterval(() => {
+                currentUptime++;
+                pingUptimeEl.textContent = formatUptime(currentUptime);
+            }, 1000);
+
 
             // Fetch /stats
             const statsRes = await fetch(`${API_BASE_URL}/stats`);
             const statsData = await statsRes.json();
             totalRequestsEl.textContent = statsData.total_requests;
             successRateEl.textContent = `${statsData.success_rate_percent}%`;
+
+            // Fetch /metrics
+            const metricsRes = await fetch(`${API_BASE_URL}/metrics`);
+            const metricsData = await metricsRes.text();
+            metricsEl.textContent = metricsData.trim();
+
         } catch (error) {
             console.error('Error fetching general stats:', error);
+            if (uptimeInterval) clearInterval(uptimeInterval);
             pingStatusEl.textContent = 'Error';
             pingStatusEl.className = 'status-down';
+            metricsEl.textContent = 'Failed to load.';
         }
     }
 
