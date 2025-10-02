@@ -1,4 +1,10 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // --- Chart.js Global Settings for Dark Theme ---
+    if (typeof Chart !== 'undefined') {
+        Chart.defaults.color = 'rgba(224, 224, 224, 0.8)';
+        Chart.defaults.borderColor = 'rgba(51, 51, 51, 0.8)';
+    }
+
     const API_BASE_URL = 'https://cfanalistik.up.railway.app';
 
     // --- DOM Elements ---
@@ -70,6 +76,8 @@ document.addEventListener('DOMContentLoaded', () => {
             if (uptimeInterval) clearInterval(uptimeInterval);
             pingStatusEl.textContent = 'Error';
             pingStatusEl.className = 'status-down';
+            totalRequestsEl.textContent = 'N/A';
+            successRateEl.textContent = 'N/A';
             metricsEl.textContent = 'Failed to load.';
         }
     }
@@ -168,10 +176,22 @@ document.addEventListener('DOMContentLoaded', () => {
                     labels: ['Used Bandwidth (GB)'],
                     datasets: [{
                         data: [(data.total_bandwidth_today_bytes / 1e9)],
-                        backgroundColor: ['#3498db'],
+                        backgroundColor: ['#bb86fc'],
+                        borderColor: '#121212',
+                        hoverOffset: 4
                     }]
                 },
-                options: { responsive: true, maintainAspectRatio: false }
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: 'rgba(224, 224, 224, 0.8)'
+                            }
+                        }
+                    }
+                }
             });
 
         } else if (data.type === 'worker') {
@@ -195,10 +215,35 @@ document.addEventListener('DOMContentLoaded', () => {
                     datasets: [{
                         label: 'CPU Time (µs)',
                         data: [data.cpu_time_p50, data.cpu_time_p90, data.cpu_time_p99],
-                        backgroundColor: ['#3498db', '#2ecc71', '#f1c40f'],
+                        backgroundColor: ['#bb86fc', '#03dac6', '#cf6679'],
+                        borderColor: '#121212',
+                        borderWidth: 1
                     }]
                 },
-                options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: {
+                                color: 'rgba(224, 224, 224, 0.1)'
+                            }
+                        },
+                        x: {
+                            grid: {
+                                display: false
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: 'rgba(224, 224, 224, 0.8)'
+                            }
+                        }
+                    }
+                }
             });
         }
     }
