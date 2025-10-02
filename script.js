@@ -131,9 +131,11 @@ document.addEventListener('DOMContentLoaded', () => {
             const response = await fetch(`${API_BASE_URL}/statscf/data/${uniqueId}`);
             const result = await response.json();
 
-            if (response.ok && result.success) {
-                renderCloudflareStats(result.data);
+            if (response.ok && result.success && result.data && result.data.length > 0) {
+                renderCloudflareStats(result.data[0]); // Pass the first element of the data array
                 saveAndRenderStoredIds(uniqueId);
+            } else if (result.data && result.data.length === 0) {
+                renderError('No analytics data found for this ID yet.');
             } else {
                 renderError(`Failed to load stats: ${result.error || 'ID not found'}`);
             }
@@ -157,95 +159,78 @@ document.addEventListener('DOMContentLoaded', () => {
     function renderCloudflareStats(data) {
         cfDataDisplayEl.innerHTML = ''; // Clear previous content
 
-        if (data.type === 'zone') {
-            cfDataDisplayEl.innerHTML = `
-                <div class="card">
-                    <h3>Zone Stats: ${data.zone_id}</h3>
-                    <p>Total Requests (Today): <strong>${data.total_requests_today.toLocaleString()}</strong></p>
-                    <p>Total Bandwidth (Today): <strong>${(data.total_bandwidth_today_bytes / 1e9).toFixed(2)} GB</strong></p>
-                </div>
-                <div class="card">
-                    <h3>Bandwidth Usage</h3>
-                    <canvas id="bandwidthChart"></canvas>
-                </div>
-            `;
-            // Render chart
-            new Chart(document.getElementById('bandwidthChart'), {
-                type: 'doughnut',
-                data: {
-                    labels: ['Used Bandwidth (GB)'],
-                    datasets: [{
-                        data: [(data.total_bandwidth_today_bytes / 1e9)],
-                        backgroundColor: ['#bb86fc'],
-                        borderColor: '#121212',
-                        hoverOffset: 4
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    plugins: {
-                        legend: {
-                            labels: {
-                                color: 'rgba(224, 224, 224, 0.8)'
-                            }
-                        }
-                    }
-                }
-            });
+        const { global_stats, zone_stats, worker_stats } = data;
 
-        } else if (data.type === 'worker') {
-            cfDataDisplayEl.innerHTML = `
-                <div class="card">
-                    <h3>Worker Stats: ${data.worker_name}</h3>
-                    <p>Total Requests: <strong>${data.total_requests_today.toLocaleString()}</strong></p>
-                    <p>Total Subrequests: <strong>${data.total_subrequests_today.toLocaleString()}</strong></p>
-                    <p>Errors: <strong class="${data.total_errors_today > 0 ? 'status-down' : ''}">${data.total_errors_today.toLocaleString()}</strong></p>
-                </div>
-                <div class="card">
-                    <h3>CPU Time (µs)</h3>
-                    <canvas id="cpuChart"></canvas>
-                </div>
-            `;
-            // Render chart
-            new Chart(document.getElementById('cpuChart'), {
-                type: 'bar',
-                data: {
-                    labels: ['P50', 'P90', 'P99'],
-                    datasets: [{
-                        label: 'CPU Time (µs)',
-                        data: [data.cpu_time_p50, data.cpu_time_p90, data.cpu_time_p99],
-                        backgroundColor: ['#bb86fc', '#03dac6', '#cf6679'],
-                        borderColor: '#121212',
-                        borderWidth: 1
-                    }]
+        // Create and append cards
+        const globalCard = document.createElement('div');
+        globalCard.className = 'card';
+        globalCard.innerHTML = `
+            <h3>Global Stats</h3>
+            <p>Total Requests: <strong>${global_stats.total_requests.toLocaleString()}</strong></p>
+        `;
+
+        const zoneCard = document.createElement('div');
+        zoneCard.className = 'card';
+        zoneCard.innerHTML = `
+            <h3>Zone Stats</h3>
+            <p>Bandwidth Usage: <strong>${(zone_stats.bandwidth_bytes / 1e9).toFixed(4)} GB</strong></p>
+            <canvas id="bandwidthChart"></canvas>
+        `;
+
+        const workerCard = document.createElement('div');
+        workerCard.className = 'card';
+        workerCard.innerHTML = `
+            <h3>Worker Stats</h3>
+            <p>Requests: <strong>${worker_stats.requests.toLocaleString()}</strong></p>
+            <p>Subrequests: <strong>${worker_stats.subrequests.toLocaleString()}</strong></p>
+            <p>Errors: <strong class="${worker_stats.errors > 0 ? 'status-down' : ''}">${worker_stats.errors.toLocaleString()}</strong></p>
+            <canvas id="workerChart"></canvas>
+        `;
+
+        cfDataDisplayEl.appendChild(globalCard);
+        cfDataDisplayEl.appendChild(zoneCard);
+        cfDataDisplayEl.appendChild(workerCard);
+
+        // Render Bandwidth Chart
+        new Chart(document.getElementById('bandwidthChart'), {
+            type: 'doughnut',
+            data: {
+                labels: ['Bandwidth (GB)'],
+                datasets: [{
+                    data: [(zone_stats.bandwidth_bytes / 1e9) || 0],
+                    backgroundColor: ['#bb86fc'],
+                    borderColor: '#1e1e1e',
+                    hoverOffset: 4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } }
+            }
+        });
+
+        // Render Worker Stats Chart
+        new Chart(document.getElementById('workerChart'), {
+            type: 'bar',
+            data: {
+                labels: ['Requests', 'Subrequests', 'Errors'],
+                datasets: [{
+                    label: 'Count',
+                    data: [worker_stats.requests, worker_stats.subrequests, worker_stats.errors],
+                    backgroundColor: ['#bb86fc', '#03dac6', '#cf6679'],
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: { beginAtZero: true, grid: { color: 'rgba(224, 224, 224, 0.1)' } },
+                    x: { grid: { display: false } }
                 },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    scales: {
-                        y: {
-                            beginAtZero: true,
-                            grid: {
-                                color: 'rgba(224, 224, 224, 0.1)'
-                            }
-                        },
-                        x: {
-                            grid: {
-                                display: false
-                            }
-                        }
-                    },
-                    plugins: {
-                        legend: {
-                            labels: {
-                                color: 'rgba(224, 224, 224, 0.8)'
-                            }
-                        }
-                    }
-                }
-            });
-        }
+                plugins: { legend: { display: false } }
+            }
+        });
     }
 
     // --- Local Storage Functions ---
