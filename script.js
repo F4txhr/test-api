@@ -75,9 +75,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Fetch general API stats (/ping, /stats, /metrics)
     async function fetchGeneralStats() {
+        const cacheBust = `?_=${new Date().getTime()}`;
         // Fetch /ping
         try {
-            const pingRes = await fetch(`${API_BASE_URL}/ping`);
+            const pingRes = await fetch(`${API_BASE_URL}/ping${cacheBust}`);
             const pingData = await pingRes.json();
             pingStatusEl.textContent = pingData.status;
             pingStatusEl.className = pingData.status === 'Alive' ? 'status-up' : 'status-down';
@@ -99,7 +100,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Fetch /stats
         try {
-            const statsRes = await fetch(`${API_BASE_URL}/stats`);
+            const statsRes = await fetch(`${API_BASE_URL}/stats${cacheBust}`);
             const statsData = await statsRes.json();
             apiStatsTitleEl.textContent = `API Stats (${statsData.service})`;
             animateCountUp(totalRequestsEl, statsData.total_requests);
@@ -117,7 +118,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Fetch /metrics
         try {
-            const metricsRes = await fetch(`${API_BASE_URL}/metrics`);
+            const metricsRes = await fetch(`${API_BASE_URL}/metrics${cacheBust}`);
             const metricsData = await metricsRes.text();
             metricsEl.textContent = metricsData.trim();
         } catch (error) {
@@ -183,131 +184,112 @@ document.addEventListener('DOMContentLoaded', () => {
 // Fetch Cloudflare monitoring data
 async function fetchCloudflareStats(accountId) {
     cfDataDisplayEl.innerHTML = `<div class="card placeholder"><p>Loading stats for account...</p></div>`;
-
-        try {
+    try {
         const response = await fetch(`${API_BASE_URL}/statscf/data/${accountId}`);
-            const result = await response.json();
+        const result = await response.json();
 
-            if (response.ok && result.success && result.data && result.data.length > 0) {
-            renderCloudflareStats(result); // Pass the entire result object
-            } else if (result.data && result.data.length === 0) {
-                renderError('No analytics data found for this ID yet.');
-            } else {
-                renderError(`Failed to load stats: ${result.error || 'ID not found'}`);
-            }
-        } catch (error) {
-            renderError(`Network Error: ${error.message}`);
+        if (response.ok && result.success && result.data) {
+            renderCloudflareStats(result.data); // Pass the data OBJECT
+            return result; // Return the full result for "Load & Save"
+        } else {
+            renderError(`Failed to load stats: ${result.error || 'ID not found or no data'}`);
+            return null;
         }
+    } catch (error) {
+        renderError(`Network Error: ${error.message}`);
+        return null;
     }
+}
 
-    // --- UI Rendering Functions ---
+// --- UI Rendering Functions ---
 
-    function showToast(message, type = 'info') {
-        const toastContainer = document.getElementById('toast-container');
-        if (!toastContainer) return;
+function showToast(message, type = 'info') {
+    const toastContainer = document.getElementById('toast-container');
+    if (!toastContainer) return;
 
-        const toast = document.createElement('div');
-        toast.className = `toast ${type}`;
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
 
-        const icons = {
-            success: 'fa-solid fa-check-circle',
-            error: 'fa-solid fa-times-circle',
-            info: 'fa-solid fa-info-circle',
-        };
+    const icons = {
+        success: 'fa-solid fa-check-circle',
+        error: 'fa-solid fa-times-circle',
+        info: 'fa-solid fa-info-circle',
+    };
 
-        toast.innerHTML = `
-            <i class="toast-icon ${icons[type] || icons.info}"></i>
-            <span>${message}</span>
+    toast.innerHTML = `
+        <i class="toast-icon ${icons[type] || icons.info}"></i>
+        <span>${message}</span>
+    `;
+
+    toastContainer.appendChild(toast);
+
+    toast.addEventListener('animationend', (event) => {
+        if (event.animationName === 'fadeOut') {
+            toast.remove();
+        }
+    });
+}
+
+function renderError(errorMessage) {
+    cfDataDisplayEl.innerHTML = `<div class="card placeholder"><p style="color: #c62828;">${errorMessage}</p></div>`;
+}
+
+function renderCloudflareStats(data) { // data is now the object from result.data
+    cfDataDisplayEl.innerHTML = ''; // Clear previous content
+
+    if (data.type === 'zone') {
+        cfDataDisplayEl.innerHTML = `
+            <div class="card">
+                <h3><i class="fa-solid fa-server"></i> Zone Stats: ${data.zone_id}</h3>
+                <p>Total Requests (Today): <strong>${data.total_requests_today.toLocaleString()}</strong></p>
+                <p>Total Bandwidth (Today): <strong>${(data.total_bandwidth_today_bytes / 1e9).toFixed(2)} GB</strong></p>
+            </div>
+            <div class="card">
+                <h3><i class="fa-solid fa-chart-pie"></i> Bandwidth Usage</h3>
+                <canvas id="bandwidthChart"></canvas>
+            </div>
         `;
-
-        toastContainer.appendChild(toast);
-
-        toast.addEventListener('animationend', (event) => {
-            if (event.animationName === 'fadeOut') {
-                toast.remove();
-            }
-        });
-    }
-
-    function renderError(errorMessage) {
-        cfDataDisplayEl.innerHTML = `<div class="card placeholder"><p style="color: #c62828;">${errorMessage}</p></div>`;
-    }
-
-    function renderCloudflareStats(result) { // result is the full API response
-        cfDataDisplayEl.innerHTML = ''; // Clear previous content
-
-        const statsData = result.data[0];
-        const { global_stats, zone_stats, worker_stats } = statsData;
-        const { data_source, period } = result;
-
-        // Create and append metadata info card
-        const metadataCard = document.createElement('div');
-        metadataCard.className = 'card metadata-card';
-        metadataCard.innerHTML = `
-            <h3><i class="fa-solid fa-info-circle"></i> Request Info</h3>
-            <p>Data Source: <strong>${data_source}</strong></p>
-            <p>Period: <strong>${period.since} to ${period.until}</strong></p>
-        `;
-
-        // Create and append stats cards
-        const globalCard = document.createElement('div');
-        globalCard.className = 'card';
-        globalCard.innerHTML = `
-            <h3><i class="fa-solid fa-globe"></i> Global Stats</h3>
-            <p>Total Requests: <strong>${global_stats.total_requests.toLocaleString()}</strong></p>
-        `;
-
-        const zoneCard = document.createElement('div');
-        zoneCard.className = 'card';
-        zoneCard.innerHTML = `
-            <h3><i class="fa-solid fa-server"></i> Zone Stats</h3>
-            <p>Bandwidth Usage: <strong>${(zone_stats.bandwidth_bytes / 1e9).toFixed(4)} GB</strong></p>
-            <canvas id="bandwidthChart"></canvas>
-        `;
-
-        const workerCard = document.createElement('div');
-        workerCard.className = 'card';
-        workerCard.innerHTML = `
-            <h3><i class="fa-solid fa-microchip"></i> Worker Stats</h3>
-            <p>Requests: <strong>${worker_stats.requests.toLocaleString()}</strong></p>
-            <p>Subrequests: <strong>${worker_stats.subrequests.toLocaleString()}</strong></p>
-            <p>Errors: <strong class="${worker_stats.errors > 0 ? 'status-down' : ''}">${worker_stats.errors.toLocaleString()}</strong></p>
-            <canvas id="workerChart"></canvas>
-        `;
-
-        cfDataDisplayEl.appendChild(metadataCard);
-        cfDataDisplayEl.appendChild(globalCard);
-        cfDataDisplayEl.appendChild(zoneCard);
-        cfDataDisplayEl.appendChild(workerCard);
-
-        // Render Bandwidth Chart
         new Chart(document.getElementById('bandwidthChart'), {
             type: 'doughnut',
             data: {
-                labels: ['Bandwidth (GB)'],
+                labels: ['Used Bandwidth (GB)'],
                 datasets: [{
-                    data: [(zone_stats.bandwidth_bytes / 1e9) || 0],
+                    data: [(data.total_bandwidth_today_bytes / 1e9)],
                     backgroundColor: ['#bb86fc'],
-                    borderColor: '#1e1e1e',
+                    borderColor: '#121212',
                     hoverOffset: 4
                 }]
             },
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { display: false } }
+                plugins: { legend: { labels: { color: 'rgba(224, 224, 224, 0.8)' } } }
             }
         });
 
-        // Render Worker Stats Chart
-        new Chart(document.getElementById('workerChart'), {
+    } else if (data.type === 'worker') {
+        cfDataDisplayEl.innerHTML = `
+            <div class="card">
+                <h3><i class="fa-solid fa-microchip"></i> Worker Stats: ${data.worker_name}</h3>
+                <p>Total Requests: <strong>${data.total_requests_today.toLocaleString()}</strong></p>
+                <p>Total Subrequests: <strong>${data.total_subrequests_today.toLocaleString()}</strong></p>
+                <p>Errors: <strong class="${data.total_errors_today > 0 ? 'status-down' : ''}">${data.total_errors_today.toLocaleString()}</strong></p>
+            </div>
+            <div class="card">
+                <h3><i class="fa-solid fa-chart-bar"></i> CPU Time (µs)</h3>
+                <canvas id="cpuChart"></canvas>
+            </div>
+        `;
+        new Chart(document.getElementById('cpuChart'), {
             type: 'bar',
             data: {
-                labels: ['Requests', 'Subrequests', 'Errors'],
+                labels: ['P50', 'P90', 'P99'],
                 datasets: [{
-                    label: 'Count',
-                    data: [worker_stats.requests, worker_stats.subrequests, worker_stats.errors],
+                    label: 'CPU Time (µs)',
+                    data: [data.cpu_time_p50, data.cpu_time_p90, data.cpu_time_p99],
                     backgroundColor: ['#bb86fc', '#03dac6', '#cf6679'],
+                    borderColor: '#121212',
+                    borderWidth: 1
                 }]
             },
             options: {
@@ -317,10 +299,13 @@ async function fetchCloudflareStats(accountId) {
                     y: { beginAtZero: true, grid: { color: 'rgba(224, 224, 224, 0.1)' } },
                     x: { grid: { display: false } }
                 },
-                plugins: { legend: { display: false } }
+                plugins: { legend: { labels: { color: 'rgba(224, 224, 224, 0.8)' } } }
             }
         });
+    } else {
+        renderError("Unknown or invalid data type received from API.");
     }
+}
 
     // --- Account Management Functions ---
     function getAccounts() {
@@ -495,35 +480,26 @@ async function fetchCloudflareStats(accountId) {
         submitButton.innerHTML = '<span class="spinner"></span> Loading...';
         submitButton.disabled = true;
 
-        try {
-            const response = await fetch(`${API_BASE_URL}/statscf/data/${uniqueId}`);
-            const result = await response.json();
+        const result = await fetchCloudflareStats(uniqueId);
 
-            if (response.ok && result.success && result.data && result.data.length > 0) {
-                renderCloudflareStats(result);
-                showToast('Stats loaded successfully!', 'success');
-
-                // If a name was provided, save this as a "loaded" account
-                if (accountName) {
-                    const newAccount = {
-                        id: uniqueId,
-                        name: accountName,
-                        loaded: true // Flag to indicate it was loaded by ID
-                    };
-                    saveAccount(newAccount);
-                    renderSavedAccounts();
-                    monitorForm.reset();
-                }
-            } else if (result.data && result.data.length === 0) {
-                renderError('No analytics data found for this ID yet.');
-            } else {
-                renderError(`Failed to load stats: ${result.error || 'ID not found'}`);
-            }
-        } catch (error) {
-            renderError(`Network Error: ${error.message}`);
-        } finally {
-            submitButton.innerHTML = originalButtonText;
-            submitButton.disabled = false;
+        if (result && accountName) {
+            // If the fetch was successful and a name was provided, save the account
+            const newAccount = {
+                id: uniqueId,
+                name: accountName,
+                // We don't have full details, so mark it as 'loaded'
+                // This prevents the 'Edit' button from showing
+                loaded: true
+            };
+            saveAccount(newAccount);
+            renderSavedAccounts();
+            monitorForm.reset();
+            showToast(`Account "${accountName}" saved and loaded!`, 'success');
+        } else if (result) {
+            showToast('Stats loaded successfully!', 'success');
         }
+
+        submitButton.innerHTML = originalButtonText;
+        submitButton.disabled = false;
     });
 });
