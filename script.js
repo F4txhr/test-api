@@ -11,9 +11,13 @@ document.addEventListener('DOMContentLoaded', () => {
     // General Stats
     const pingStatusEl = document.getElementById('ping-status-val');
     const pingUptimeEl = document.getElementById('ping-uptime-val');
+    const pingTimeEl = document.getElementById('ping-time-val');
     const totalRequestsEl = document.getElementById('stats-total-req-val');
     const successRateEl = document.getElementById('stats-success-rate-val');
     const metricsEl = document.getElementById('metrics-val');
+    const apiStatsTitleEl = document.getElementById('api-stats-title');
+    const successCountEl = document.getElementById('stats-success-val');
+    const failureCountEl = document.getElementById('stats-failed-val');
 
     // CF Registration
     const registerForm = document.getElementById('register-form');
@@ -49,6 +53,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const pingData = await pingRes.json();
             pingStatusEl.textContent = pingData.status;
             pingStatusEl.className = pingData.status === 'Alive' ? 'status-up' : 'status-down';
+            pingTimeEl.textContent = pingData.time_wib;
 
             // Start the realtime uptime counter
             if (uptimeInterval) clearInterval(uptimeInterval);
@@ -63,7 +68,10 @@ document.addEventListener('DOMContentLoaded', () => {
             // Fetch /stats
             const statsRes = await fetch(`${API_BASE_URL}/stats`);
             const statsData = await statsRes.json();
+            apiStatsTitleEl.textContent = `API Stats (${statsData.service})`;
             totalRequestsEl.textContent = statsData.total_requests;
+            successCountEl.textContent = statsData.success_count;
+            failureCountEl.textContent = statsData.failure_count;
             successRateEl.textContent = `${statsData.success_rate_percent}%`;
 
             // Fetch /metrics
@@ -76,7 +84,11 @@ document.addEventListener('DOMContentLoaded', () => {
             if (uptimeInterval) clearInterval(uptimeInterval);
             pingStatusEl.textContent = 'Error';
             pingStatusEl.className = 'status-down';
+            pingTimeEl.textContent = 'N/A';
+            apiStatsTitleEl.textContent = 'API Stats';
             totalRequestsEl.textContent = 'N/A';
+            successCountEl.textContent = 'N/A';
+            failureCountEl.textContent = 'N/A';
             successRateEl.textContent = 'N/A';
             metricsEl.textContent = 'Failed to load.';
         }
