@@ -78,7 +78,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const cacheBust = `?_=${new Date().getTime()}`;
         // Fetch /ping
         try {
-            const pingRes = await fetch(`${API_BASE_URL}/ping${cacheBust}`);
+            const pingRes = await fetch(`${API_BASE_URL}/ping${cacheBust}`, {
+                headers: { 'Accept': 'application/json' }
+            });
             const pingData = await pingRes.json();
             pingStatusEl.textContent = pingData.status;
             pingStatusEl.className = pingData.status === 'Alive' ? 'status-up' : 'status-down';
@@ -100,7 +102,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Fetch /stats
         try {
-            const statsRes = await fetch(`${API_BASE_URL}/stats${cacheBust}`);
+            const statsRes = await fetch(`${API_BASE_URL}/stats${cacheBust}`, {
+                headers: { 'Accept': 'application/json' }
+            });
             const statsData = await statsRes.json();
             apiStatsTitleEl.textContent = `API Stats (${statsData.service})`;
             animateCountUp(totalRequestsEl, statsData.total_requests);
