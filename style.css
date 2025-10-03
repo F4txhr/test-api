@@ -31,6 +31,17 @@ h1, h2, h3 {
     color: #ffffff;
     margin-top: 0;
     font-weight: 600;
+    display: flex;
+    align-items: center;
+}
+
+h2 > .fa-solid,
+h3 > .fa-solid {
+    margin-right: 12px;
+    font-size: 0.9em;
+    color: var(--primary-color);
+    width: 24px;
+    text-align: center;
 }
 
 a {
@@ -157,6 +168,28 @@ button:hover {
     transform: translateY(-2px);
 }
 
+button:disabled {
+    background-color: #555;
+    cursor: not-allowed;
+    transform: translateY(0);
+}
+
+.spinner {
+    display: inline-block;
+    width: 1em;
+    height: 1em;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: #fff;
+    animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
 /* Specific Sections Styling */
 #ping-status-val, #stats-success-rate-val {
     font-weight: bold;
@@ -190,6 +223,12 @@ button:hover {
     background-color: rgba(207, 102, 121, 0.1);
     color: var(--error-color);
     border: 1px solid var(--error-color);
+}
+
+.response-message.info {
+    background-color: rgba(187, 134, 252, 0.1);
+    color: var(--primary-color);
+    border: 1px solid var(--primary-color);
 }
 
 #cf-data-display {
@@ -247,6 +286,156 @@ canvas {
     word-wrap: break-word;
     font-size: 0.85em;
     color: var(--on-surface-secondary-color);
+    font-family: 'Roboto Mono', monospace;
+}
+
+/* Saved Accounts List */
+#saved-accounts-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.saved-account-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    background-color: #2c2c2c;
+    border: 1px solid var(--border-color);
+    transition: background-color 0.2s, border-color 0.2s;
+}
+
+.saved-account-item:hover {
+    background-color: #3a3a3a;
+}
+
+.saved-account-item.active {
+    background-color: var(--primary-variant-color);
+    border-color: var(--primary-color);
+}
+
+.account-name {
+    font-weight: 500;
+    cursor: pointer;
+    flex-grow: 1;
+}
+
+.account-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.action-btn {
+    background: none;
+    border: none;
+    color: var(--on-surface-secondary-color);
+    cursor: pointer;
+    font-size: 1.1em;
+    padding: 0.5rem;
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s, color 0.2s;
+}
+
+.action-btn:hover {
+    background-color: #444;
+    color: #fff;
+}
+
+.placeholder-text {
+    color: var(--on-surface-secondary-color);
+    text-align: center;
+    padding: 1rem;
+}
+
+/* Modal Styles */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal-content {
+    background-color: var(--surface-color);
+    padding: 2rem;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 500px;
+    position: relative;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+
+.close-btn {
+    position: absolute;
+    top: 1rem;
+    right: 1rem;
+    background: none;
+    border: none;
+    color: var(--on-surface-secondary-color);
+    font-size: 1.5rem;
+    cursor: pointer;
+}
+
+/* Toast Notifications */
+#toast-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.toast {
+    background-color: var(--surface-color);
+    color: var(--on-surface-color);
+    padding: 15px 20px;
+    border-radius: 8px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    border-left: 5px solid;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    transform: translateX(120%);
+    animation: slideIn 0.5s forwards, fadeOut 0.5s 4.5s forwards;
+}
+
+.toast.success { border-color: var(--success-color); }
+.toast.error { border-color: var(--error-color); }
+.toast.info { border-color: var(--primary-color); }
+
+.toast-icon {
+    font-size: 1.2em;
+}
+
+@keyframes slideIn {
+    to {
+        transform: translateX(0);
+    }
+}
+
+@keyframes fadeOut {
+    from {
+        opacity: 1;
+    }
+    to {
+        opacity: 0;
+        transform: translateX(120%);
+    }
 }
 
 /* Responsive Design */

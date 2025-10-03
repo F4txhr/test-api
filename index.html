@@ -4,6 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>API Monitoring Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -15,53 +19,59 @@
     <main>
         <!-- General API Stats Section -->
         <section id="general-stats" class="card-container">
-            <h2>General Status</h2>
+            <h2><i class="fa-solid fa-signal"></i> General Status</h2>
             <div class="card" id="ping-status">
-                <h3>Ping</h3>
+                <h3><i class="fa-solid fa-heart-pulse"></i> Ping</h3>
                 <p>Status: <span id="ping-status-val">...</span></p>
                 <p>Uptime: <span id="ping-uptime-val">...</span></p>
                 <p>Time (WIB): <span id="ping-time-val">...</span></p>
             </div>
             <div class="card" id="api-stats">
-                <h3 id="api-stats-title">API Stats</h3>
+                <h3 id="api-stats-title"><i class="fa-solid fa-chart-simple"></i> API Stats</h3>
                 <p>Total Requests: <span id="stats-total-req-val">...</span></p>
                 <p>Successful: <span id="stats-success-val">...</span></p>
                 <p>Failed: <span id="stats-failed-val">...</span></p>
                 <p>Success Rate: <span id="stats-success-rate-val">...</span></p>
             </div>
             <div class="card" id="metrics-card">
-                <h3>Metrics (Raw)</h3>
+                <h3><i class="fa-solid fa-file-code"></i> Metrics (Raw)</h3>
                 <pre id="metrics-val">Loading...</pre>
+            </div>
+        </section>
+
+        <!-- Proxy Tester Section -->
+        <section id="proxy-tester-section">
+            <h2><i class="fa-solid fa-network-wired"></i> Proxy Tester</h2>
+            <div class="card" id="proxy-tester-card">
+                <form id="proxy-test-form">
+                    <input type="text" id="proxy-address" placeholder="Enter proxy address (e.g., 1.1.1.1:8080)" required>
+                    <button type="submit">Test Proxy</button>
+                </form>
             </div>
         </section>
 
         <!-- Cloudflare Stats Section -->
         <section id="cloudflare-section">
-            <h2>Cloudflare Analytics</h2>
+            <h2><i class="fa-solid fa-cloud"></i> Cloudflare Analytics</h2>
 
             <!-- Registration Form -->
             <div id="cf-registration" class="card">
-                <h3>Register New Cloudflare Account</h3>
+                <h3><i class="fa-solid fa-plus-circle"></i> Register New Cloudflare Account</h3>
                 <form id="register-form">
+                    <input type="text" id="cf-account-name" placeholder="Account Name (e.g., My Main Account)" required>
                     <input type="text" id="cf-api-token" placeholder="Cloudflare API Token" required>
                     <input type="text" id="cf-account-id" placeholder="Cloudflare Account ID" required>
                     <input type="text" id="cf-zone-id" placeholder="Cloudflare Zone ID (Optional)">
                     <input type="text" id="cf-worker-name" placeholder="Cloudflare Worker Name (Optional)">
                     <button type="submit">Register</button>
                 </form>
-                <div id="register-response" class="response-message"></div>
             </div>
 
-            <!-- Monitoring Form -->
-            <div id="cf-monitoring" class="card">
-                <h3>Monitor Existing Account</h3>
-                <form id="monitor-form">
-                    <input type="text" id="monitor-unique-id" placeholder="Enter your Unique ID">
-                    <button type="submit">Load Stats</button>
-                </form>
-                 <div class="stored-ids-container">
-                    <p>Recently used IDs:</p>
-                    <div id="stored-ids"></div>
+            <!-- Saved Accounts -->
+            <div id="cf-saved-accounts" class="card">
+                <h3><i class="fa-solid fa-list-check"></i> Saved Accounts</h3>
+                <div id="saved-accounts-list">
+                    <!-- Saved accounts will be dynamically inserted here -->
                 </div>
             </div>
 
@@ -80,6 +90,26 @@
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/countup.js@2.0.7/dist/countUp.min.js"></script>
     <script src="script.js"></script>
+
+    <!-- Edit Account Modal -->
+    <div id="edit-modal" class="modal-overlay" style="display: none;">
+        <div class="modal-content">
+            <button id="close-modal-btn" class="close-btn">&times;</button>
+            <h3>Edit Account</h3>
+            <form id="edit-form">
+                <input type="hidden" id="edit-account-id">
+                <input type="text" id="edit-account-name" placeholder="Account Name" required>
+                <input type="text" id="edit-api-token" placeholder="Cloudflare API Token" required>
+                <input type="text" id="edit-account-id-cf" placeholder="Cloudflare Account ID" required>
+                <input type="text" id="edit-zone-id" placeholder="Cloudflare Zone ID (Optional)">
+                <input type="text" id="edit-worker-name" placeholder="Cloudflare Worker Name (Optional)">
+                <button type="submit">Save Changes</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="toast-container"></div>
 </body>
 </html>

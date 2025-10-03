@@ -24,14 +24,39 @@ document.addEventListener('DOMContentLoaded', () => {
     const registerResponseEl = document.getElementById('register-response');
 
     // CF Monitoring
-    const monitorForm = document.getElementById('monitor-form');
-    const monitorIdInput = document.getElementById('monitor-unique-id');
     const cfDataDisplayEl = document.getElementById('cf-data-display');
-    const storedIdsContainer = document.getElementById('stored-ids');
+    const savedAccountsListEl = document.getElementById('saved-accounts-list');
+
+    // Proxy Tester
+    const proxyTestForm = document.getElementById('proxy-test-form');
+    const proxyAddressInput = document.getElementById('proxy-address');
+    const proxyTestResultEl = document.getElementById('proxy-test-result');
+
+    // Edit Modal
+    const editModal = document.getElementById('edit-modal');
+    const editForm = document.getElementById('edit-form');
+    const closeModalBtn = document.getElementById('close-modal-btn');
 
     let uptimeInterval = null;
 
     // --- Helper Functions ---
+    function animateCountUp(element, endValue) {
+        const startValue = parseInt(element.dataset.previousValue || '0', 10);
+        const countUp = new CountUp(element, endValue, {
+            startVal: startValue,
+            duration: 1.5,
+            useEasing: true,
+            separator: ',',
+        });
+        if (!countUp.error) {
+            countUp.start();
+        } else {
+            console.error(countUp.error);
+            element.textContent = endValue;
+        }
+        element.dataset.previousValue = endValue;
+    }
+
     function formatUptime(totalSeconds) {
         const days = Math.floor(totalSeconds / 86400);
         totalSeconds %= 86400;
@@ -69,9 +94,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const statsRes = await fetch(`${API_BASE_URL}/stats`);
             const statsData = await statsRes.json();
             apiStatsTitleEl.textContent = `API Stats (${statsData.service})`;
-            totalRequestsEl.textContent = statsData.total_requests;
-            successCountEl.textContent = statsData.success_count;
-            failureCountEl.textContent = statsData.failure_count;
+            animateCountUp(totalRequestsEl, statsData.total_requests);
+            animateCountUp(successCountEl, statsData.success_count);
+            animateCountUp(failureCountEl, statsData.failure_count);
             successRateEl.textContent = `${statsData.success_rate_percent}%`;
 
             // Fetch /metrics
@@ -98,54 +123,66 @@ document.addEventListener('DOMContentLoaded', () => {
     async function handleRegistration(event) {
         event.preventDefault();
         const formData = new FormData(registerForm);
-        const data = {
-            cf_api_token: formData.get('cf-api-token'),
-            cf_account_id: formData.get('cf-account-id'),
-            cf_zone_id: formData.get('cf-zone-id'),
-            cf_worker_name: formData.get('cf-worker-name'),
-        };
+    const accountName = formData.get('cf-account-name');
+    const apiToken = formData.get('cf-api-token');
+    const accountId = formData.get('cf-account-id');
+    const zoneId = formData.get('cf-zone-id');
+    const workerName = formData.get('cf-worker-name');
 
-        displayResponse(registerResponseEl, 'Registering...', 'loading');
+    const submitButton = registerForm.querySelector('button[type="submit"]');
+    const originalButtonText = submitButton.innerHTML;
+    submitButton.innerHTML = '<span class="spinner"></span> Registering...';
+    submitButton.disabled = true;
+
+    const apiData = {
+        cf_api_token: apiToken,
+        cf_account_id: accountId,
+        cf_zone_id: zoneId,
+        cf_worker_name: workerName,
+        };
 
         try {
             const response = await fetch(`${API_BASE_URL}/statscf`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data),
+            body: JSON.stringify(apiData),
             });
             const result = await response.json();
 
             if (response.ok && result.success) {
-                displayResponse(registerResponseEl, `Success! Your Unique ID is: ${result.unique_id}`, 'success');
-                saveAndRenderStoredIds(result.unique_id);
-                monitorIdInput.value = result.unique_id; // Auto-fill monitor input
+            const newAccount = {
+                id: result.unique_id,
+                name: accountName,
+                api_token: apiToken,
+                account_id: accountId,
+                zone_id: zoneId,
+                worker_name: workerName
+            };
+            saveAccount(newAccount);
+            renderSavedAccounts();
+            showToast(`Account "${accountName}" registered successfully!`, 'success');
                 registerForm.reset();
             } else {
-                displayResponse(registerResponseEl, `Error: ${result.error || 'Unknown error'}`, 'error');
+            showToast(`Error: ${result.error || 'Unknown error'}`, 'error');
             }
         } catch (error) {
-            displayResponse(registerResponseEl, `Network Error: ${error.message}`, 'error');
+        showToast(`Network Error: ${error.message}`, 'error');
+    } finally {
+        submitButton.innerHTML = originalButtonText;
+        submitButton.disabled = false;
         }
     }
 
-    // Handle Cloudflare monitoring
-    async function handleMonitoring(event) {
-        event.preventDefault();
-        const uniqueId = monitorIdInput.value.trim();
-        if (!uniqueId) {
-            alert('Please enter a Unique ID.');
-            return;
-        }
-
-        cfDataDisplayEl.innerHTML = '<div class="card"><p>Loading stats...</p></div>';
+// Fetch Cloudflare monitoring data
+async function fetchCloudflareStats(accountId) {
+    cfDataDisplayEl.innerHTML = `<div class="card placeholder"><p>Loading stats for account...</p></div>`;
 
         try {
-            const response = await fetch(`${API_BASE_URL}/statscf/data/${uniqueId}`);
+        const response = await fetch(`${API_BASE_URL}/statscf/data/${accountId}`);
             const result = await response.json();
 
             if (response.ok && result.success && result.data && result.data.length > 0) {
-                renderCloudflareStats(result.data[0]); // Pass the first element of the data array
-                saveAndRenderStoredIds(uniqueId);
+            renderCloudflareStats(result.data[0]);
             } else if (result.data && result.data.length === 0) {
                 renderError('No analytics data found for this ID yet.');
             } else {
@@ -158,10 +195,31 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- UI Rendering Functions ---
 
-    function displayResponse(element, message, type) {
-        element.style.display = 'block';
-        element.className = `response-message ${type}`;
-        element.textContent = message;
+    function showToast(message, type = 'info') {
+        const toastContainer = document.getElementById('toast-container');
+        if (!toastContainer) return;
+
+        const toast = document.createElement('div');
+        toast.className = `toast ${type}`;
+
+        const icons = {
+            success: 'fa-solid fa-check-circle',
+            error: 'fa-solid fa-times-circle',
+            info: 'fa-solid fa-info-circle',
+        };
+
+        toast.innerHTML = `
+            <i class="toast-icon ${icons[type] || icons.info}"></i>
+            <span>${message}</span>
+        `;
+
+        toastContainer.appendChild(toast);
+
+        toast.addEventListener('animationend', (event) => {
+            if (event.animationName === 'fadeOut') {
+                toast.remove();
+            }
+        });
     }
 
     function renderError(errorMessage) {
@@ -245,47 +303,160 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // --- Local Storage Functions ---
-    function getStoredIds() {
-        return JSON.parse(localStorage.getItem('cf_monitor_ids')) || [];
+    // --- Account Management Functions ---
+    function getAccounts() {
+        return JSON.parse(localStorage.getItem('cf_accounts')) || {};
     }
 
-    function saveAndRenderStoredIds(newId) {
-        let ids = getStoredIds();
-        if (!ids.includes(newId)) {
-            ids.unshift(newId); // Add to the beginning
-            ids = ids.slice(0, 5); // Keep only the last 5
-            localStorage.setItem('cf_monitor_ids', JSON.stringify(ids));
+    function saveAccount(account) {
+        const accounts = getAccounts();
+        accounts[account.id] = account;
+        localStorage.setItem('cf_accounts', JSON.stringify(accounts));
+    }
+
+    function deleteAccount(accountId) {
+        const accounts = getAccounts();
+        delete accounts[accountId];
+        localStorage.setItem('cf_accounts', JSON.stringify(accounts));
+    }
+
+    function renderSavedAccounts() {
+        savedAccountsListEl.innerHTML = '';
+        const accounts = getAccounts();
+        const accountIds = Object.keys(accounts);
+
+        if (accountIds.length === 0) {
+            savedAccountsListEl.innerHTML = '<p class="placeholder-text">No accounts saved yet.</p>';
+            return;
         }
-        renderStoredIds();
-    }
 
-    function renderStoredIds() {
-        const ids = getStoredIds();
-        storedIdsContainer.innerHTML = '';
-        if (ids.length > 0) {
-            ids.forEach(id => {
-                const btn = document.createElement('button');
-                btn.className = 'stored-id-btn';
-                btn.textContent = id.substring(0, 8) + '...';
-                btn.title = id;
-                btn.onclick = () => {
-                    monitorIdInput.value = id;
-                    handleMonitoring(new Event('submit'));
-                };
-                storedIdsContainer.appendChild(btn);
+        accountIds.forEach(id => {
+            const account = accounts[id];
+            const accountEl = document.createElement('div');
+            accountEl.className = 'saved-account-item';
+            accountEl.innerHTML = `
+                <span class="account-name">${account.name}</span>
+                <div class="account-actions">
+                    <button class="action-btn edit-btn" data-id="${id}"><i class="fas fa-edit"></i></button>
+                    <button class="action-btn delete-btn" data-id="${id}"><i class="fas fa-trash"></i></button>
+                </div>
+            `;
+
+            accountEl.querySelector('.account-name').addEventListener('click', () => {
+                fetchCloudflareStats(id);
+                // Optional: add a visual indicator for the selected account
+                document.querySelectorAll('.saved-account-item').forEach(el => el.classList.remove('active'));
+                accountEl.classList.add('active');
             });
-        }
-    }
 
+            savedAccountsListEl.appendChild(accountEl);
+        });
+    }
 
     // --- Initial Load & Interval ---
     fetchGeneralStats();
     setInterval(fetchGeneralStats, 15000); // Refresh every 15 seconds
+    renderSavedAccounts();
 
-    renderStoredIds();
+    // --- Proxy Test Function ---
+    async function handleProxyTest(event) {
+        event.preventDefault();
+        const proxyAddress = proxyAddressInput.value.trim();
+        if (!proxyAddress) {
+            showToast('Please enter a proxy address.', 'error');
+            return;
+        }
+
+        const submitButton = proxyTestForm.querySelector('button[type="submit"]');
+        const originalButtonText = submitButton.innerHTML;
+        submitButton.innerHTML = '<span class="spinner"></span> Testing...';
+        submitButton.disabled = true;
+
+        try {
+            const response = await fetch(`${API_BASE_URL}/health?proxy=${encodeURIComponent(proxyAddress)}`);
+            const result = await response.json();
+
+            if (response.ok) {
+                showToast(`Proxy UP | Latency: ${result.latency_ms}ms`, 'success');
+            } else {
+                showToast(`Proxy DOWN | Error: ${result.error || 'N/A'}`, 'error');
+            }
+        } catch (error) {
+            showToast(`Network error: ${error.message}`, 'error');
+        } finally {
+            submitButton.innerHTML = originalButtonText;
+            submitButton.disabled = false;
+            // Refresh the general stats to show the new request count
+            await fetchGeneralStats();
+        }
+    }
 
     // --- Event Listeners ---
     registerForm.addEventListener('submit', handleRegistration);
-    monitorForm.addEventListener('submit', handleMonitoring);
+    proxyTestForm.addEventListener('submit', handleProxyTest);
+
+    savedAccountsListEl.addEventListener('click', (event) => {
+        const target = event.target.closest('.action-btn');
+        if (!target) return;
+
+        const accountId = target.dataset.id;
+
+        if (target.classList.contains('delete-btn')) {
+            if (confirm('Are you sure you want to delete this account?')) {
+                deleteAccount(accountId);
+                renderSavedAccounts();
+                // Optionally clear the display if the deleted account was active
+                cfDataDisplayEl.innerHTML = '<div class="card placeholder"><p>Select an account to view stats.</p></div>';
+            }
+        }
+
+        if (target.classList.contains('edit-btn')) {
+            openEditModal(accountId);
+        }
+    });
+
+    function openEditModal(accountId) {
+        const accounts = getAccounts();
+        const account = accounts[accountId];
+        if (!account) return;
+
+        // Populate the form with existing data
+        editForm.querySelector('#edit-account-id').value = account.id;
+        editForm.querySelector('#edit-account-name').value = account.name;
+        editForm.querySelector('#edit-api-token').value = account.api_token;
+        editForm.querySelector('#edit-account-id-cf').value = account.account_id;
+        editForm.querySelector('#edit-zone-id').value = account.zone_id || '';
+        editForm.querySelector('#edit-worker-name').value = account.worker_name || '';
+
+        editModal.style.display = 'flex';
+    }
+
+    function closeEditModal() {
+        editModal.style.display = 'none';
+    }
+
+    closeModalBtn.addEventListener('click', closeEditModal);
+    editModal.addEventListener('click', (event) => {
+        if (event.target === editModal) {
+            closeEditModal();
+        }
+    });
+
+    editForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const accountId = editForm.querySelector('#edit-account-id').value;
+
+        const updatedAccount = {
+            id: accountId,
+            name: editForm.querySelector('#edit-account-name').value,
+            api_token: editForm.querySelector('#edit-api-token').value,
+            account_id: editForm.querySelector('#edit-account-id-cf').value,
+            zone_id: editForm.querySelector('#edit-zone-id').value,
+            worker_name: editForm.querySelector('#edit-worker-name').value,
+        };
+
+        saveAccount(updatedAccount);
+        renderSavedAccounts();
+        closeEditModal();
+    });
 });
