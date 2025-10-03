@@ -91,7 +91,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 pingUptimeEl.textContent = formatUptime(currentUptime);
             }, 1000);
         } catch (error) {
-            console.error('Error fetching /ping:', error);
+            showToast(`Failed to fetch /ping: ${error.message}`, 'error');
             pingStatusEl.textContent = 'Error';
             pingStatusEl.className = 'status-down';
             pingTimeEl.textContent = 'N/A';
@@ -107,7 +107,7 @@ document.addEventListener('DOMContentLoaded', () => {
             animateCountUp(failureCountEl, statsData.failure_count);
             successRateEl.textContent = `${statsData.success_rate_percent}%`;
         } catch (error) {
-            console.error('Error fetching /stats:', error);
+            showToast(`Failed to fetch /stats: ${error.message}`, 'error');
             apiStatsTitleEl.textContent = 'API Stats';
             totalRequestsEl.textContent = 'N/A';
             successCountEl.textContent = 'N/A';
@@ -121,7 +121,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const metricsData = await metricsRes.text();
             metricsEl.textContent = metricsData.trim();
         } catch (error) {
-            console.error('Error fetching /metrics:', error);
+            showToast(`Failed to fetch /metrics: ${error.message}`, 'error');
             metricsEl.textContent = 'Failed to load.';
         }
     }
