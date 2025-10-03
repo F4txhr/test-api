@@ -74,9 +74,11 @@
                     <!-- Saved accounts will be dynamically inserted here -->
                 </div>
                 <hr class="divider">
+                <h4 class="form-title"><i class="fa-solid fa-search"></i> Load by ID</h4>
                 <form id="monitor-form">
-                    <input type="text" id="monitor-unique-id" placeholder="Or load by Unique ID directly">
-                    <button type="submit">Load by ID</button>
+                    <input type="text" id="monitor-unique-id" name="monitor-unique-id" placeholder="Enter Unique ID" required>
+                    <input type="text" id="monitor-account-name" name="monitor-account-name" placeholder="Account Name (Optional, saves on load)">
+                    <button type="submit">Load & Save</button>
                 </form>
             </div>
 

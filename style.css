@@ -361,6 +361,12 @@ canvas {
     margin: 1.5rem 0;
 }
 
+.form-title {
+    font-size: 1.1em;
+    margin-bottom: 1rem;
+    color: var(--on-surface-secondary-color);
+}
+
 /* Modal Styles */
 .modal-overlay {
     position: fixed;

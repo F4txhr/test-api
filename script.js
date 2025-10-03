@@ -73,17 +73,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- API Fetch Functions ---
 
-    // Fetch general API stats (/ping and /stats)
+    // Fetch general API stats (/ping, /stats, /metrics)
     async function fetchGeneralStats() {
+        // Fetch /ping
         try {
-            // Fetch /ping
             const pingRes = await fetch(`${API_BASE_URL}/ping`);
             const pingData = await pingRes.json();
             pingStatusEl.textContent = pingData.status;
             pingStatusEl.className = pingData.status === 'Alive' ? 'status-up' : 'status-down';
             pingTimeEl.textContent = pingData.time_wib;
 
-            // Start the realtime uptime counter
             if (uptimeInterval) clearInterval(uptimeInterval);
             let currentUptime = pingData.uptime_seconds;
             pingUptimeEl.textContent = formatUptime(currentUptime);
@@ -91,9 +90,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 currentUptime++;
                 pingUptimeEl.textContent = formatUptime(currentUptime);
             }, 1000);
+        } catch (error) {
+            console.error('Error fetching /ping:', error);
+            pingStatusEl.textContent = 'Error';
+            pingStatusEl.className = 'status-down';
+            pingTimeEl.textContent = 'N/A';
+        }
 
-
-            // Fetch /stats
+        // Fetch /stats
+        try {
             const statsRes = await fetch(`${API_BASE_URL}/stats`);
             const statsData = await statsRes.json();
             apiStatsTitleEl.textContent = `API Stats (${statsData.service})`;
@@ -101,23 +106,22 @@ document.addEventListener('DOMContentLoaded', () => {
             animateCountUp(successCountEl, statsData.success_count);
             animateCountUp(failureCountEl, statsData.failure_count);
             successRateEl.textContent = `${statsData.success_rate_percent}%`;
-
-            // Fetch /metrics
-            const metricsRes = await fetch(`${API_BASE_URL}/metrics`);
-            const metricsData = await metricsRes.text();
-            metricsEl.textContent = metricsData.trim();
-
         } catch (error) {
-            console.error('Error fetching general stats:', error);
-            if (uptimeInterval) clearInterval(uptimeInterval);
-            pingStatusEl.textContent = 'Error';
-            pingStatusEl.className = 'status-down';
-            pingTimeEl.textContent = 'N/A';
+            console.error('Error fetching /stats:', error);
             apiStatsTitleEl.textContent = 'API Stats';
             totalRequestsEl.textContent = 'N/A';
             successCountEl.textContent = 'N/A';
             failureCountEl.textContent = 'N/A';
             successRateEl.textContent = 'N/A';
+        }
+
+        // Fetch /metrics
+        try {
+            const metricsRes = await fetch(`${API_BASE_URL}/metrics`);
+            const metricsData = await metricsRes.text();
+            metricsEl.textContent = metricsData.trim();
+        } catch (error) {
+            console.error('Error fetching /metrics:', error);
             metricsEl.textContent = 'Failed to load.';
         }
     }
@@ -349,10 +353,11 @@ async function fetchCloudflareStats(accountId) {
             const account = accounts[id];
             const accountEl = document.createElement('div');
             accountEl.className = 'saved-account-item';
+            const editButton = account.loaded ? '' : `<button class="action-btn edit-btn" data-id="${id}"><i class="fas fa-edit"></i></button>`;
             accountEl.innerHTML = `
                 <span class="account-name">${account.name}</span>
                 <div class="account-actions">
-                    <button class="action-btn edit-btn" data-id="${id}"><i class="fas fa-edit"></i></button>
+                    ${editButton}
                     <button class="action-btn delete-btn" data-id="${id}"><i class="fas fa-trash"></i></button>
                 </div>
             `;
@@ -478,6 +483,8 @@ async function fetchCloudflareStats(accountId) {
     monitorForm.addEventListener('submit', async (event) => {
         event.preventDefault();
         const uniqueId = monitorForm.querySelector('#monitor-unique-id').value.trim();
+        const accountName = monitorForm.querySelector('#monitor-account-name').value.trim();
+
         if (!uniqueId) {
             showToast('Please enter a Unique ID.', 'error');
             return;
@@ -488,9 +495,35 @@ async function fetchCloudflareStats(accountId) {
         submitButton.innerHTML = '<span class="spinner"></span> Loading...';
         submitButton.disabled = true;
 
-        await fetchCloudflareStats(uniqueId);
+        try {
+            const response = await fetch(`${API_BASE_URL}/statscf/data/${uniqueId}`);
+            const result = await response.json();
 
-        submitButton.innerHTML = originalButtonText;
-        submitButton.disabled = false;
+            if (response.ok && result.success && result.data && result.data.length > 0) {
+                renderCloudflareStats(result);
+                showToast('Stats loaded successfully!', 'success');
+
+                // If a name was provided, save this as a "loaded" account
+                if (accountName) {
+                    const newAccount = {
+                        id: uniqueId,
+                        name: accountName,
+                        loaded: true // Flag to indicate it was loaded by ID
+                    };
+                    saveAccount(newAccount);
+                    renderSavedAccounts();
+                    monitorForm.reset();
+                }
+            } else if (result.data && result.data.length === 0) {
+                renderError('No analytics data found for this ID yet.');
+            } else {
+                renderError(`Failed to load stats: ${result.error || 'ID not found'}`);
+            }
+        } catch (error) {
+            renderError(`Network Error: ${error.message}`);
+        } finally {
+            submitButton.innerHTML = originalButtonText;
+            submitButton.disabled = false;
+        }
     });
 });
