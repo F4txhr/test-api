@@ -37,6 +37,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const editForm = document.getElementById('edit-form');
     const closeModalBtn = document.getElementById('close-modal-btn');
 
+    // Load by ID form
+    const monitorForm = document.getElementById('monitor-form');
+
     let uptimeInterval = null;
 
     // --- Helper Functions ---
@@ -182,7 +185,7 @@ async function fetchCloudflareStats(accountId) {
             const result = await response.json();
 
             if (response.ok && result.success && result.data && result.data.length > 0) {
-            renderCloudflareStats(result.data[0]);
+            renderCloudflareStats(result); // Pass the entire result object
             } else if (result.data && result.data.length === 0) {
                 renderError('No analytics data found for this ID yet.');
             } else {
@@ -226,23 +229,34 @@ async function fetchCloudflareStats(accountId) {
         cfDataDisplayEl.innerHTML = `<div class="card placeholder"><p style="color: #c62828;">${errorMessage}</p></div>`;
     }
 
-    function renderCloudflareStats(data) {
+    function renderCloudflareStats(result) { // result is the full API response
         cfDataDisplayEl.innerHTML = ''; // Clear previous content
 
-        const { global_stats, zone_stats, worker_stats } = data;
+        const statsData = result.data[0];
+        const { global_stats, zone_stats, worker_stats } = statsData;
+        const { data_source, period } = result;
 
-        // Create and append cards
+        // Create and append metadata info card
+        const metadataCard = document.createElement('div');
+        metadataCard.className = 'card metadata-card';
+        metadataCard.innerHTML = `
+            <h3><i class="fa-solid fa-info-circle"></i> Request Info</h3>
+            <p>Data Source: <strong>${data_source}</strong></p>
+            <p>Period: <strong>${period.since} to ${period.until}</strong></p>
+        `;
+
+        // Create and append stats cards
         const globalCard = document.createElement('div');
         globalCard.className = 'card';
         globalCard.innerHTML = `
-            <h3>Global Stats</h3>
+            <h3><i class="fa-solid fa-globe"></i> Global Stats</h3>
             <p>Total Requests: <strong>${global_stats.total_requests.toLocaleString()}</strong></p>
         `;
 
         const zoneCard = document.createElement('div');
         zoneCard.className = 'card';
         zoneCard.innerHTML = `
-            <h3>Zone Stats</h3>
+            <h3><i class="fa-solid fa-server"></i> Zone Stats</h3>
             <p>Bandwidth Usage: <strong>${(zone_stats.bandwidth_bytes / 1e9).toFixed(4)} GB</strong></p>
             <canvas id="bandwidthChart"></canvas>
         `;
@@ -250,13 +264,14 @@ async function fetchCloudflareStats(accountId) {
         const workerCard = document.createElement('div');
         workerCard.className = 'card';
         workerCard.innerHTML = `
-            <h3>Worker Stats</h3>
+            <h3><i class="fa-solid fa-microchip"></i> Worker Stats</h3>
             <p>Requests: <strong>${worker_stats.requests.toLocaleString()}</strong></p>
             <p>Subrequests: <strong>${worker_stats.subrequests.toLocaleString()}</strong></p>
             <p>Errors: <strong class="${worker_stats.errors > 0 ? 'status-down' : ''}">${worker_stats.errors.toLocaleString()}</strong></p>
             <canvas id="workerChart"></canvas>
         `;
 
+        cfDataDisplayEl.appendChild(metadataCard);
         cfDataDisplayEl.appendChild(globalCard);
         cfDataDisplayEl.appendChild(zoneCard);
         cfDataDisplayEl.appendChild(workerCard);
@@ -458,5 +473,24 @@ async function fetchCloudflareStats(accountId) {
         saveAccount(updatedAccount);
         renderSavedAccounts();
         closeEditModal();
+    });
+
+    monitorForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const uniqueId = monitorForm.querySelector('#monitor-unique-id').value.trim();
+        if (!uniqueId) {
+            showToast('Please enter a Unique ID.', 'error');
+            return;
+        }
+
+        const submitButton = monitorForm.querySelector('button[type="submit"]');
+        const originalButtonText = submitButton.innerHTML;
+        submitButton.innerHTML = '<span class="spinner"></span> Loading...';
+        submitButton.disabled = true;
+
+        await fetchCloudflareStats(uniqueId);
+
+        submitButton.innerHTML = originalButtonText;
+        submitButton.disabled = false;
     });
 });
